@@ -1,14 +1,15 @@
 /* InReview — minimal stylesheet */
 
 :root {
-  --bg:     #fff;
-  --fg:     #111;
-  --muted:  #666;
-  --border: #ddd;
-  --link:   #0055cc;
-  --green:  #1a7f37;
-  --red:    #cf222e;
-  --orange: #9a6700;
+  --bg:        #1c1c1e;
+  --bg-subtle: #2c2c2e;
+  --fg:        #e6edf3;
+  --muted:     #848d97;
+  --border:    #30363d;
+  --link:      #58a6ff;
+  --green:     #3fb950;
+  --red:       #f85149;
+  --orange:    #d29922;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -74,7 +75,7 @@ p  { margin: 0 0 0.5rem; }
   line-height: 1.5;
   transition: transform 0.1s, background 0.1s;
 }
-.hi-reaction-btn:hover { background: #f5f5f5; transform: scale(1.2); }
+.hi-reaction-btn:hover { background: var(--bg-subtle); transform: scale(1.2); }
 
 .hi-meta         { display: flex; align-items: center; gap: 0.35rem; }
 .hi-avatar-stack { display: flex; align-items: center; }
@@ -248,9 +249,9 @@ p  { margin: 0 0 0.5rem; }
 .board-row:hover .board-name { text-decoration: underline; }
 
 .board-rank   { width: 2.2rem; flex-shrink: 0; font-size: 0.68rem; color: var(--muted); }
-.rank-gold    { color: #b8860b; font-weight: 700; }
-.rank-silver  { color: #888;    font-weight: 700; }
-.rank-bronze  { color: #8b5e3c; font-weight: 700; }
+.rank-gold    { color: #e3b341; font-weight: 700; }
+.rank-silver  { color: #adbac7; font-weight: 700; }
+.rank-bronze  { color: #c7956c; font-weight: 700; }
 .rank-other   { color: var(--muted); }
 
 .board-name   { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -314,7 +315,7 @@ p  { margin: 0 0 0.5rem; }
   border-right: 1px solid var(--border);
 }
 .stat-card:last-child  { border-right: none; }
-.stat-card.highlight   { background: #f9f9f9; }
+.stat-card.highlight   { background: var(--bg-subtle); }
 .stat-card-num         { font-size: 1rem; font-weight: 700; }
 .stat-card-label       { font-size: 0.68rem; color: var(--muted); }
 
@@ -510,7 +511,7 @@ p  { margin: 0 0 0.5rem; }
   border-bottom: 1px solid var(--border);
 }
 .sr-item:last-child  { border-bottom: none; }
-.sr-item:hover       { background: #f5f5f5; }
+.sr-item:hover       { background: var(--bg-subtle); }
 .sr-avatar           { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; margin-top: 1px; }
 .sr-icon             { font-size: 0.62rem; color: var(--muted); border: 1px solid var(--border); padding: 0 3px; flex-shrink: 0; margin-top: 2px; }
 .sr-body             { flex: 1; min-width: 0; }
