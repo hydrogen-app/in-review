@@ -439,19 +439,13 @@ func (d *DB) queryEntries(query string, limit int) ([]LeaderboardEntry, error) {
 	rank := 1
 	for rows.Next() {
 		var e LeaderboardEntry
-		var rawVal interface{}
-		if err := rows.Scan(&e.Name, &rawVal, &e.Extra); err != nil {
+		var val int64
+		if err := rows.Scan(&e.Name, &val, &e.Extra); err != nil {
 			log.Printf("db: queryEntries scan error (rank %d): %v", rank, err)
 			continue
 		}
-		switch v := rawVal.(type) {
-		case int64:
-			e.Value = v
-			e.Count = int(v)
-		case float64:
-			e.Value = int64(v)
-			e.Count = int(v)
-		}
+		e.Value = val
+		e.Count = int(val)
 		e.Rank = rank
 		entries = append(entries, e)
 		rank++

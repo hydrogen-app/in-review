@@ -292,9 +292,12 @@ func (h *Handler) populateLeaderboardData(data *LeaderboardPageData, category st
 		cached.NextOffset = offset + pageSize
 	}
 
-	// Store in cache.
-	if raw, err := json.Marshal(cached); err == nil {
-		h.cache.Set(ctx, cacheKey, raw, rdb.CacheTTL)
+	// Store in cache only when we have results (avoid caching empty state during initial sync).
+	hasResults := len(cached.RepoRows) > 0 || len(cached.UserRows) > 0 || len(cached.CleanRows) > 0
+	if hasResults {
+		if raw, err := json.Marshal(cached); err == nil {
+			h.cache.Set(ctx, cacheKey, raw, rdb.CacheTTL)
+		}
 	}
 
 	data.RepoRows = cached.RepoRows

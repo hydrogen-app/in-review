@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"inreview/internal/db"
@@ -26,9 +27,19 @@ func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 
 	data.SpeedDemons, _ = h.db.LeaderboardReposBySpeed("ASC", 5)
 	data.PRGraveyard, _ = h.db.LeaderboardReposBySpeed("DESC", 5)
-	data.ReviewChamps, _ = h.db.LeaderboardReviewers(5)
-	data.Gatekeepers, _ = h.db.LeaderboardGatekeepers(5)
-	data.MergeMasters, _ = h.db.LeaderboardAuthors(5)
+	var err error
+	data.ReviewChamps, err = h.db.LeaderboardReviewers(5)
+	if err != nil {
+		log.Printf("home: LeaderboardReviewers error: %v", err)
+	}
+	data.Gatekeepers, err = h.db.LeaderboardGatekeepers(5)
+	if err != nil {
+		log.Printf("home: LeaderboardGatekeepers error: %v", err)
+	}
+	data.MergeMasters, err = h.db.LeaderboardAuthors(5)
+	if err != nil {
+		log.Printf("home: LeaderboardAuthors error: %v", err)
+	}
 	data.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
 
 	data.PopularVisits, _ = h.db.PopularVisits(3)
