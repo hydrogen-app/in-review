@@ -13,6 +13,7 @@ import (
 	"inreview/internal/db"
 	"inreview/internal/github"
 	"inreview/internal/handlers"
+	"inreview/internal/rdb"
 	"inreview/internal/worker"
 )
 
@@ -32,20 +33,28 @@ func main() {
 	}
 	defer database.Close()
 
+	// Redis
+	cache, err := rdb.New(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("failed to connect to redis: %v", err)
+	}
+	defer cache.Close()
+
 	// GitHub client
 	ghClient := github.NewClient(cfg.GitHubToken)
 
 	// Sync worker
-	w := worker.New(ghClient, database)
+	w := worker.New(ghClient, database, cache)
 	w.Start()
 
 	// HTTP router
-	h := handlers.New(database, ghClient, w, cfg)
+	h := handlers.New(database, ghClient, w, cache, cfg)
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(middleware.Compress(5))
+	r.Use(cache.RateLimit(300, time.Minute))
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 

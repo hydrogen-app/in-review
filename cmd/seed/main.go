@@ -13,6 +13,7 @@ import (
 	"inreview/internal/config"
 	"inreview/internal/db"
 	"inreview/internal/github"
+	"inreview/internal/rdb"
 	"inreview/internal/worker"
 )
 
@@ -49,8 +50,14 @@ func main() {
 	}
 	defer database.Close()
 
+	cache, err := rdb.New(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("failed to connect to redis: %v", err)
+	}
+	defer cache.Close()
+
 	ghClient := github.NewClient(cfg.GitHubToken)
-	w := worker.New(ghClient, database)
+	w := worker.New(ghClient, database, cache)
 	w.Start()
 
 	queued := 0

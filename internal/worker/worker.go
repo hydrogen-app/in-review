@@ -5,34 +5,29 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	"inreview/internal/db"
 	"inreview/internal/github"
+	"inreview/internal/rdb"
 )
 
 const (
 	maxPRsPerRepo = 500
 	syncCooldown  = 6 * time.Hour
 	workerCount   = 3
-	queueSize     = 200
+	popTimeout    = 30 * time.Second
 )
 
 // Worker manages background GitHub sync jobs.
 type Worker struct {
-	gh         *github.Client
-	db         *db.DB
-	inProgress sync.Map
-	queue      chan string
+	gh  *github.Client
+	db  *db.DB
+	rdb *rdb.Client
 }
 
-func New(gh *github.Client, db *db.DB) *Worker {
-	return &Worker{
-		gh:    gh,
-		db:    db,
-		queue: make(chan string, queueSize),
-	}
+func New(gh *github.Client, db *db.DB, rdb *rdb.Client) *Worker {
+	return &Worker{gh: gh, db: db, rdb: rdb}
 }
 
 // Start launches background sync goroutines.
@@ -43,7 +38,12 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) run() {
-	for fullName := range w.queue {
+	ctx := context.Background()
+	for {
+		fullName, ok := w.rdb.QPop(ctx, popTimeout)
+		if !ok {
+			continue
+		}
 		w.syncRepo(fullName)
 	}
 }
@@ -51,7 +51,8 @@ func (w *Worker) run() {
 // Queue schedules a repo sync unless one is already in-flight or recently completed.
 // Set force=true to bypass the cooldown check.
 func (w *Worker) Queue(fullName string, force bool) {
-	if _, loaded := w.inProgress.LoadOrStore(fullName, true); loaded {
+	ctx := context.Background()
+	if w.rdb.QIsInProgress(ctx, fullName) {
 		return
 	}
 	if !force {
@@ -59,30 +60,27 @@ func (w *Worker) Queue(fullName string, force bool) {
 		if repo != nil && repo.LastSynced != nil &&
 			time.Since(*repo.LastSynced) < syncCooldown &&
 			repo.SyncStatus == "done" {
-			w.inProgress.Delete(fullName)
 			return
 		}
 	}
-	select {
-	case w.queue <- fullName:
-	default:
-		// Queue full; drop this job silently
-		w.inProgress.Delete(fullName)
+	// Reserve the slot before pushing so concurrent Queue calls are idempotent.
+	w.rdb.QMarkInProgress(ctx, fullName)
+	if err := w.rdb.QPush(ctx, fullName); err != nil {
+		log.Printf("[queue] failed to push %s: %v", fullName, err)
+		w.rdb.QMarkDone(ctx, fullName)
 	}
 }
 
-// IsSyncing returns true if the repo is currently being synced.
+// IsSyncing returns true if the repo is currently queued or being synced.
 func (w *Worker) IsSyncing(fullName string) bool {
-	_, ok := w.inProgress.Load(fullName)
-	return ok
+	return w.rdb.QIsInProgress(context.Background(), fullName)
 }
 
 // syncRepo performs the full GitHub data pull for one repository.
 func (w *Worker) syncRepo(fullName string) {
-	defer w.inProgress.Delete(fullName)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
+	defer w.rdb.QMarkDone(ctx, fullName)
 
 	parts := strings.SplitN(fullName, "/", 2)
 	if len(parts) != 2 {

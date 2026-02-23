@@ -11,6 +11,7 @@ import (
 	"inreview/internal/config"
 	"inreview/internal/db"
 	"inreview/internal/github"
+	"inreview/internal/rdb"
 	"inreview/internal/worker"
 )
 
@@ -19,16 +20,18 @@ type Handler struct {
 	db      *db.DB
 	gh      *github.Client
 	worker  *worker.Worker
+	cache   *rdb.Client
 	cfg     *config.Config
 	tmpls   map[string]*template.Template
 	funcMap template.FuncMap
 }
 
-func New(database *db.DB, gh *github.Client, w *worker.Worker, cfg *config.Config) *Handler {
+func New(database *db.DB, gh *github.Client, w *worker.Worker, cache *rdb.Client, cfg *config.Config) *Handler {
 	h := &Handler{
 		db:     database,
 		gh:     gh,
 		worker: w,
+		cache:  cache,
 		cfg:    cfg,
 	}
 	h.funcMap = template.FuncMap{

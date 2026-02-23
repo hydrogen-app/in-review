@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"inreview/internal/db"
+	"inreview/internal/rdb"
 )
 
 const pageSize = 50
@@ -207,57 +211,96 @@ func (h *Handler) leaderboardRepoSearch(result *LeaderboardSearchData, category,
 	result.GraveyardRank, _ = h.db.RepoGraveyardRank(repo.FullName)
 }
 
+// cachedLeaderboardRows is the cacheable subset of LeaderboardPageData.
+type cachedLeaderboardRows struct {
+	RepoRows  []db.RepoLeaderboardRow
+	UserRows  []db.UserLeaderboardRow
+	CleanRows []db.CleanLeaderboardRow
+	HasMore   bool
+	NextOffset int
+}
+
 // populateLeaderboardData fetches one page of rows into data starting at offset.
+// Results are cached in Redis for rdb.CacheTTL.
 func (h *Handler) populateLeaderboardData(data *LeaderboardPageData, category string, offset int) {
-	// Fetch one extra row to detect whether another page exists.
+	cacheKey := fmt.Sprintf("lb:%s:%d", category, offset)
+	ctx := context.Background()
+
+	// Try cache first.
+	if raw, ok := h.cache.Get(ctx, cacheKey); ok {
+		var cached cachedLeaderboardRows
+		if json.Unmarshal(raw, &cached) == nil {
+			data.RepoRows = cached.RepoRows
+			data.UserRows = cached.UserRows
+			data.CleanRows = cached.CleanRows
+			data.HasMore = cached.HasMore
+			data.NextOffset = cached.NextOffset
+			return
+		}
+	}
+
+	// Cache miss — query the DB.
 	fetch := pageSize + 1
+	var cached cachedLeaderboardRows
 
 	switch category {
 	case "speed":
 		rows, _ := h.db.FullLeaderboardRepoSpeed("ASC", fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.RepoRows = rows
+		cached.RepoRows = rows
 	case "graveyard":
 		rows, _ := h.db.FullLeaderboardRepoSpeed("DESC", fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.RepoRows = rows
+		cached.RepoRows = rows
 	case "reviewers":
 		rows, _ := h.db.FullLeaderboardReviewers(fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.UserRows = rows
+		cached.UserRows = rows
 	case "gatekeepers":
 		rows, _ := h.db.FullLeaderboardGatekeepers(fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.UserRows = rows
+		cached.UserRows = rows
 	case "authors":
 		rows, _ := h.db.FullLeaderboardAuthors(fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.UserRows = rows
+		cached.UserRows = rows
 	case "oneshot":
 		rows, _ := h.db.FullLeaderboardCleanApprovals(fetch, offset)
-		data.HasMore = len(rows) == fetch
-		if data.HasMore {
+		cached.HasMore = len(rows) == fetch
+		if cached.HasMore {
 			rows = rows[:pageSize]
 		}
-		data.CleanRows = rows
+		cached.CleanRows = rows
 	}
 
-	if data.HasMore {
-		data.NextOffset = offset + pageSize
+	if cached.HasMore {
+		cached.NextOffset = offset + pageSize
 	}
+
+	// Store in cache.
+	if raw, err := json.Marshal(cached); err == nil {
+		h.cache.Set(ctx, cacheKey, raw, rdb.CacheTTL)
+	}
+
+	data.RepoRows = cached.RepoRows
+	data.UserRows = cached.UserRows
+	data.CleanRows = cached.CleanRows
+	data.HasMore = cached.HasMore
+	data.NextOffset = cached.NextOffset
 }
+

@@ -6,6 +6,7 @@ type Config struct {
 	GitHubToken string
 	DBPath      string
 	Port        string
+	RedisURL    string
 }
 
 func Load() *Config {
@@ -17,9 +18,14 @@ func Load() *Config {
 	if port == "" {
 		port = "8080"
 	}
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
 	return &Config{
 		GitHubToken: os.Getenv("GITHUB_TOKEN"),
 		DBPath:      dbPath,
 		Port:        port,
+		RedisURL:    redisURL,
 	}
 }
