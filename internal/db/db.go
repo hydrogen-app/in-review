@@ -367,7 +367,7 @@ func (d *DB) LeaderboardReposBySpeed(order string, limit int) ([]LeaderboardEntr
 
 func (d *DB) LeaderboardReviewers(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
-		SELECT r.reviewer_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
+		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE r.state IN ('APPROVED','CHANGES_REQUESTED','COMMENTED')
@@ -378,7 +378,7 @@ func (d *DB) LeaderboardReviewers(limit int) ([]LeaderboardEntry, error) {
 
 func (d *DB) LeaderboardGatekeepers(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
-		SELECT r.reviewer_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
+		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE r.state='CHANGES_REQUESTED'
@@ -389,7 +389,7 @@ func (d *DB) LeaderboardGatekeepers(limit int) ([]LeaderboardEntry, error) {
 
 func (d *DB) LeaderboardAuthors(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
-		SELECT p.author_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
+		SELECT p.author_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM pull_requests p
 		LEFT JOIN users u ON u.login=p.author_login
 		WHERE p.merged=TRUE
@@ -458,7 +458,7 @@ func (d *DB) queryEntries(query string, limit int) ([]LeaderboardEntry, error) {
 func (d *DB) RepoTopReviewers(fullName string, limit int) ([]ReviewerStats, error) {
 	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login,
-		       COALESCE(u.avatar_url,''),
+		       MAX(COALESCE(u.avatar_url,'')),
 		       COUNT(*) as total,
 		       SUM(CASE WHEN r.state='APPROVED'           THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED'  THEN 1 ELSE 0 END),
@@ -506,7 +506,7 @@ func (d *DB) RecentMergedPRs(fullName string, limit int) ([]PullRequest, error) 
 func (d *DB) UserReviewerStats(login string) (*ReviewerStats, error) {
 	s := &ReviewerStats{Login: login}
 	err := d.conn.QueryRow(`
-		SELECT COALESCE(u.avatar_url,''),
+		SELECT MAX(COALESCE(u.avatar_url,'')),
 		       COUNT(*),
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END),
@@ -610,7 +610,7 @@ func (d *DB) OrgRepos(orgName string) ([]Repo, error) {
 
 func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
-		SELECT r.reviewer_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
+		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
 		LEFT JOIN users u ON u.login=r.reviewer_login
@@ -622,7 +622,7 @@ func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEnt
 
 func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
-		SELECT r.reviewer_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
+		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
 		LEFT JOIN users u ON u.login=r.reviewer_login
@@ -705,7 +705,7 @@ func (d *DB) FullLeaderboardRepoSpeed(order string, limit, offset int) ([]RepoLe
 func (d *DB) FullLeaderboardReviewers(limit, offset int) ([]UserLeaderboardRow, error) {
 	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login,
-		       COALESCE(u.avatar_url, ''),
+		       MAX(COALESCE(u.avatar_url, '')),
 		       COUNT(*) as total,
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END)
@@ -724,7 +724,7 @@ func (d *DB) FullLeaderboardReviewers(limit, offset int) ([]UserLeaderboardRow, 
 func (d *DB) FullLeaderboardGatekeepers(limit, offset int) ([]UserLeaderboardRow, error) {
 	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login,
-		       COALESCE(u.avatar_url, ''),
+		       MAX(COALESCE(u.avatar_url, '')),
 		       COUNT(*) as total,
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END)
@@ -744,7 +744,7 @@ func (d *DB) FullLeaderboardGatekeepers(limit, offset int) ([]UserLeaderboardRow
 func (d *DB) FullLeaderboardAuthors(limit, offset int) ([]UserLeaderboardRow, error) {
 	rows, err := d.conn.Query(`
 		SELECT p.author_login,
-		       COALESCE(u.avatar_url, ''),
+		       MAX(COALESCE(u.avatar_url, '')),
 		       COUNT(*) as merged,
 		       0 as approvals,
 		       0 as changes,
