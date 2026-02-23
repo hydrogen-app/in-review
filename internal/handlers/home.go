@@ -7,15 +7,17 @@ import (
 )
 
 type HomeData struct {
-	TotalRepos   int
-	TotalPRs     int
-	TotalReviews int
-	SpeedDemons  []db.LeaderboardEntry
-	PRGraveyard  []db.LeaderboardEntry
-	ReviewChamps []db.LeaderboardEntry
-	Gatekeepers  []db.LeaderboardEntry
-	MergeMasters []db.LeaderboardEntry
-	OneShot      []db.LeaderboardEntry
+	TotalRepos      int
+	TotalPRs        int
+	TotalReviews    int
+	SpeedDemons     []db.LeaderboardEntry
+	PRGraveyard     []db.LeaderboardEntry
+	ReviewChamps    []db.LeaderboardEntry
+	Gatekeepers     []db.LeaderboardEntry
+	MergeMasters    []db.LeaderboardEntry
+	OneShot         []db.LeaderboardEntry
+	PopularVisits   []db.PageVisit
+	RecentVisits    []db.PageVisit
 }
 
 func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,17 @@ func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 	data.Gatekeepers, _ = h.db.LeaderboardGatekeepers(5)
 	data.MergeMasters, _ = h.db.LeaderboardAuthors(5)
 	data.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
+
+	data.PopularVisits, _ = h.db.PopularVisits(3)
+	if len(data.PopularVisits) > 0 {
+		exclude := make([]string, len(data.PopularVisits))
+		for i, v := range data.PopularVisits {
+			exclude[i] = v.Path
+		}
+		data.RecentVisits, _ = h.db.RecentVisits(5, exclude)
+	} else {
+		data.RecentVisits, _ = h.db.RecentVisits(5, nil)
+	}
 
 	h.render(w, "home", data)
 }

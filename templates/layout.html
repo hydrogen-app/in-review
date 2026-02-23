@@ -30,12 +30,21 @@
     {{template "content" .}}
   </main>
 
+  <!-- Hi wall -->
+  <div
+    id="hi-widget"
+    class="hi-widget"
+    hx-get="/api/hi"
+    hx-trigger="load"
+    hx-vals="js:{path: window.location.pathname}"
+  ></div>
+
   <!-- Footer -->
   <footer class="footer">
     <p>
       <span class="footer-logo">InReview</span>
       &nbsp;·&nbsp;
-      Every PR tells a story. We track the plot.
+      If you aren't reviewing, you're ngmi.
       &nbsp;·&nbsp;
       <a href="https://inreview.dev" class="footer-link">inreview.dev</a>
     </p>

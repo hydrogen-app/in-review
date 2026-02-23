@@ -10,13 +10,13 @@ import (
 )
 
 type OrgData struct {
-	Org              *db.User
-	Repos            []db.Repo
-	ReviewerBoard    []db.LeaderboardEntry
-	GatekeeperBoard  []db.LeaderboardEntry
-	TotalMergedPRs   int
-	TotalReviews     int
-	IsSyncing        bool
+	Org             *db.User
+	Repos           []db.Repo
+	ReviewerBoard   []db.LeaderboardEntry
+	GatekeeperBoard []db.LeaderboardEntry
+	TotalMergedPRs  int
+	TotalReviews    int
+	IsSyncing       bool
 }
 
 func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
@@ -100,5 +100,6 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)
 
+	h.db.RecordVisit("/org/"+orgName, "org", orgName)
 	h.render(w, "org", data)
 }

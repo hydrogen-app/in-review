@@ -3,10 +3,8 @@
 <!-- ── Hero ─────────────────────────────────────────────────────────────────── -->
 <section class="hero">
   <div class="hero-inner">
-    <div class="hero-badge">Public Beta</div>
-    <h1 class="hero-title">
-      <span class="gradient-text">Every PR tells a story.</span><br />
-      We track the plot.
+<h1 class="hero-title">
+      If you aren't reviewing,<br />you're ngmi.
     </h1>
     <p class="hero-sub">
       Global leaderboards for GitHub PR review time.<br />
@@ -17,6 +15,7 @@
     <div class="search-wrap">
       <div class="search-box">
         <input
+          id="main-search"
           type="text"
           class="search-input"
           placeholder="golang/go, torvalds, kubernetes…"
@@ -33,13 +32,17 @@
     </div>
 
     <!-- Quick pills -->
+    {{if or .PopularVisits .RecentVisits}}
     <div class="quick-pills">
       <span class="pill-label">Try:</span>
-      <a href="/repo/golang/go" class="pill">golang/go</a>
-      <a href="/repo/facebook/react" class="pill">facebook/react</a>
-      <a href="/repo/microsoft/vscode" class="pill">microsoft/vscode</a>
-      <a href="/org/kubernetes" class="pill">kubernetes</a>
+      {{range .PopularVisits}}
+      <a href="{{.Path}}" class="pill pill-hot">{{.Label}}</a>
+      {{end}}
+      {{range .RecentVisits}}
+      <a href="{{.Path}}" class="pill">{{.Label}}</a>
+      {{end}}
     </div>
+    {{end}}
   </div>
 </section>
 
@@ -65,7 +68,7 @@
 <section class="leaderboards">
   <div class="section-header">
     <h2 class="section-title">Global Leaderboards</h2>
-    <p class="section-sub">Populated as repos are searched. <a href="/repo/golang/go" class="link">Add yours →</a></p>
+    <p class="section-sub">Populated as repos are searched. <a href="#" class="link" onclick="event.preventDefault();document.getElementById('main-search').focus()">Add yours →</a></p>
   </div>
 
   <div class="board-grid">

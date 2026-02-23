@@ -99,5 +99,6 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 	data.AuthorRank, _ = h.db.UserAuthorRank(username)
 	data.ContributedRepos, _ = h.db.UserContributedRepos(username, 10)
 
+	h.db.RecordVisit("/user/"+username, "user", username)
 	h.render(w, "user", data)
 }

@@ -70,6 +70,9 @@ func main() {
 	r.Get("/api/leaderboard", h.LeaderboardAPI)
 	r.Post("/api/sync/{owner}/{name}", h.TriggerSync)
 	r.Get("/api/sync-status/{owner}/{name}", h.SyncStatus)
+	r.Get("/hi-wall", h.HiWall)
+	r.Get("/api/hi", h.HiGet)
+	r.Post("/api/hi", h.HiPost)
 
 	log.Printf("InReview listening on http://localhost:%s", cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))

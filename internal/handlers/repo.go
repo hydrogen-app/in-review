@@ -73,6 +73,7 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	data.SpeedRank, _ = h.db.RepoSpeedRank(fullName)
 	data.OwnerUser, _ = h.db.GetUser(owner)
 
+	h.db.RecordVisit("/repo/"+fullName, "repo", fullName)
 	h.render(w, "repo", data)
 }
 

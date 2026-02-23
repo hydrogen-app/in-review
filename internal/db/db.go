@@ -181,6 +181,36 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_rev_reviewer ON reviews(reviewer_login);
 		CREATE INDEX IF NOT EXISTS idx_rev_repo_pr  ON reviews(repo_full_name, pr_number);
 		CREATE INDEX IF NOT EXISTS idx_repos_org    ON repos(org_name);
+
+		CREATE TABLE IF NOT EXISTS page_visits (
+			path         TEXT PRIMARY KEY,
+			kind         TEXT NOT NULL,
+			label        TEXT NOT NULL,
+			count        INTEGER DEFAULT 1,
+			last_visited DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS page_hi (
+			path  TEXT PRIMARY KEY,
+			count INTEGER DEFAULT 0
+		);
+
+		CREATE TABLE IF NOT EXISTS page_hi_reactions (
+			path     TEXT NOT NULL,
+			reaction TEXT NOT NULL,
+			count    INTEGER DEFAULT 0,
+			PRIMARY KEY (path, reaction)
+		);
+
+		CREATE TABLE IF NOT EXISTS page_hi_log (
+			id       INTEGER PRIMARY KEY AUTOINCREMENT,
+			path     TEXT NOT NULL,
+			reaction TEXT NOT NULL DEFAULT 'wave',
+			ts       DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_hi_log_path ON page_hi_log(path);
+		CREATE INDEX IF NOT EXISTS idx_hi_log_ts   ON page_hi_log(ts);
 	`)
 	return err
 }
@@ -901,4 +931,221 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
+}
+
+// ── Page visits (for "Try:" pills) ────────────────────────────────────────────
+
+type PageVisit struct {
+	Path  string // URL path, e.g. "/repo/golang/go"
+	Kind  string // "repo", "user", "org"
+	Label string // display text, e.g. "golang/go"
+	Count int
+}
+
+func (d *DB) RecordVisit(path, kind, label string) {
+	d.conn.Exec(`
+		INSERT INTO page_visits (path, kind, label, count, last_visited)
+		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+		ON CONFLICT(path) DO UPDATE SET
+			count        = count + 1,
+			last_visited = CURRENT_TIMESTAMP
+	`, path, kind, label)
+}
+
+func (d *DB) PopularVisits(limit int) ([]PageVisit, error) {
+	rows, err := d.conn.Query(`
+		SELECT path, kind, label, count FROM page_visits
+		ORDER BY count DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanVisits(rows)
+}
+
+func (d *DB) RecentVisits(limit int, exclude []string) ([]PageVisit, error) {
+	if len(exclude) == 0 {
+		rows, err := d.conn.Query(`
+			SELECT path, kind, label, count FROM page_visits
+			ORDER BY last_visited DESC LIMIT ?
+		`, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanVisits(rows)
+	}
+	// Build NOT IN clause.
+	placeholders := "?"
+	args := []interface{}{exclude[0]}
+	for _, p := range exclude[1:] {
+		placeholders += ",?"
+		args = append(args, p)
+	}
+	args = append(args, limit)
+	rows, err := d.conn.Query(`
+		SELECT path, kind, label, count FROM page_visits
+		WHERE path NOT IN (`+placeholders+`)
+		ORDER BY last_visited DESC LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanVisits(rows)
+}
+
+func scanVisits(rows *sql.Rows) ([]PageVisit, error) {
+	var visits []PageVisit
+	for rows.Next() {
+		var v PageVisit
+		if err := rows.Scan(&v.Path, &v.Kind, &v.Label, &v.Count); err != nil {
+			continue
+		}
+		visits = append(visits, v)
+	}
+	return visits, rows.Err()
+}
+
+// ── Hi wall ───────────────────────────────────────────────────────────────────
+
+func (d *DB) HiCount(path string) int {
+	var count int
+	d.conn.QueryRow(`SELECT count FROM page_hi WHERE path=?`, path).Scan(&count)
+	return count
+}
+
+func (d *DB) HiIncrement(path string) int {
+	d.conn.Exec(`
+		INSERT INTO page_hi (path, count) VALUES (?, 1)
+		ON CONFLICT(path) DO UPDATE SET count = count + 1
+	`, path)
+	var count int
+	d.conn.QueryRow(`SELECT count FROM page_hi WHERE path=?`, path).Scan(&count)
+	return count
+}
+
+// HiWallPage is one entry on the hi wall.
+type HiWallPage struct {
+	Path       string
+	Label      string
+	Kind       string
+	TotalCount int
+	TodayCount int
+}
+
+// HiGetAll returns the total hi count, per-reaction breakdown, and today's count for a path.
+func (d *DB) HiGetAll(path string) (total int, reactions map[string]int, todayCount int) {
+	reactions = make(map[string]int)
+	rows, err := d.conn.Query(`SELECT reaction, count FROM page_hi_reactions WHERE path=?`, path)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var r string
+			var c int
+			if rows.Scan(&r, &c) == nil {
+				reactions[r] = c
+				total += c
+			}
+		}
+	}
+	d.conn.QueryRow(`
+		SELECT COUNT(*) FROM page_hi_log
+		WHERE path=? AND ts > datetime('now','-1 day')
+	`, path).Scan(&todayCount)
+	return
+}
+
+// HiIncrementReaction records a reaction and returns the updated totals.
+func (d *DB) HiIncrementReaction(path, reaction string) (total int, reactions map[string]int, todayCount int) {
+	d.conn.Exec(`
+		INSERT INTO page_hi_reactions (path, reaction, count) VALUES (?, ?, 1)
+		ON CONFLICT(path, reaction) DO UPDATE SET count = count + 1
+	`, path, reaction)
+	d.conn.Exec(`INSERT INTO page_hi_log (path, reaction) VALUES (?, ?)`, path, reaction)
+	return d.HiGetAll(path)
+}
+
+// HiTopWallPages returns the most-hi'd pages.
+func (d *DB) HiTopWallPages(limit int) ([]HiWallPage, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			r.path,
+			COALESCE(v.label, r.path) AS label,
+			COALESCE(v.kind, '')      AS kind,
+			SUM(r.count)              AS total,
+			(SELECT COUNT(*) FROM page_hi_log l
+			 WHERE l.path=r.path AND l.ts > datetime('now','-1 day')) AS today
+		FROM page_hi_reactions r
+		LEFT JOIN page_visits v ON v.path = r.path
+		GROUP BY r.path
+		ORDER BY total DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pages []HiWallPage
+	for rows.Next() {
+		var p HiWallPage
+		if err := rows.Scan(&p.Path, &p.Label, &p.Kind, &p.TotalCount, &p.TodayCount); err != nil {
+			continue
+		}
+		pages = append(pages, p)
+	}
+	return pages, rows.Err()
+}
+
+// ── Hi-wall users ─────────────────────────────────────────────────────────────
+
+// RandomTrackedUsers returns users with avatars in random order.
+func (d *DB) RandomTrackedUsers(limit int) ([]User, error) {
+	rows, err := d.conn.Query(`
+		SELECT login, name, avatar_url FROM users
+		WHERE avatar_url != '' AND is_org = 0
+		ORDER BY RANDOM() LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.Login, &u.Name, &u.AvatarURL); err != nil {
+			continue
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+// UserPeerReviewers returns users who reviewed PRs in repos where login authored PRs.
+func (d *DB) UserPeerReviewers(login string, limit int) ([]User, error) {
+	rows, err := d.conn.Query(`
+		SELECT DISTINCT u.login, COALESCE(u.name,''), COALESCE(u.avatar_url,'')
+		FROM users u
+		JOIN reviews r ON r.reviewer_login = u.login
+		WHERE r.repo_full_name IN (
+			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login = ?
+		)
+		AND r.reviewer_login != ?
+		AND u.avatar_url != ''
+		ORDER BY RANDOM() LIMIT ?
+	`, login, login, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.Login, &u.Name, &u.AvatarURL); err != nil {
+			continue
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }
