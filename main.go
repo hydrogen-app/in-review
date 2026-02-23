@@ -27,7 +27,7 @@ func main() {
 	}
 
 	// Database
-	database, err := db.New(cfg.DBPath)
+	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}

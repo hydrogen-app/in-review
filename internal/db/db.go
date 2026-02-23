@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// DB wraps the SQLite connection.
+// DB wraps the Postgres connection pool.
 type DB struct {
 	conn *sql.DB
 }
@@ -97,18 +97,18 @@ type AuthorStats struct {
 
 // ── Constructor ────────────────────────────────────────────────────────────────
 
-func New(dbPath string) (*DB, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return nil, fmt.Errorf("creating db dir: %w", err)
+func New(databaseURL string) (*DB, error) {
+	if err := os.MkdirAll(filepath.Dir(databaseURL), 0o755); err != nil {
+		// Not a file path — that's fine for a Postgres URL.
+		_ = err
 	}
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
-	conn.SetMaxOpenConns(1) // SQLite is single-writer
-	conn.Exec("PRAGMA journal_mode=WAL")
-	conn.Exec("PRAGMA synchronous=NORMAL")
-	conn.Exec("PRAGMA foreign_keys=ON")
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	d := &DB{conn: conn}
 	return d, d.migrate()
@@ -119,100 +119,96 @@ func (d *DB) Close() error { return d.conn.Close() }
 // ── Schema ─────────────────────────────────────────────────────────────────────
 
 func (d *DB) migrate() error {
-	_, err := d.conn.Exec(`
-		CREATE TABLE IF NOT EXISTS repos (
-			full_name          TEXT PRIMARY KEY,
-			owner              TEXT NOT NULL,
-			name               TEXT NOT NULL,
-			description        TEXT    DEFAULT '',
-			stars              INTEGER DEFAULT 0,
-			language           TEXT    DEFAULT '',
-			org_name           TEXT    DEFAULT '',
-			last_synced        DATETIME,
-			sync_status        TEXT    DEFAULT 'pending',
-			pr_count           INTEGER DEFAULT 0,
-			merged_pr_count    INTEGER DEFAULT 0,
-			avg_merge_time_secs INTEGER DEFAULT 0,
-			min_merge_time_secs INTEGER DEFAULT 0,
-			max_merge_time_secs INTEGER DEFAULT 0,
-			updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE IF NOT EXISTS pull_requests (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS repos (
+			full_name           TEXT PRIMARY KEY,
+			owner               TEXT NOT NULL,
+			name                TEXT NOT NULL,
+			description         TEXT        DEFAULT '',
+			stars               INTEGER     DEFAULT 0,
+			language            TEXT        DEFAULT '',
+			org_name            TEXT        DEFAULT '',
+			last_synced         TIMESTAMPTZ,
+			sync_status         TEXT        DEFAULT 'pending',
+			pr_count            INTEGER     DEFAULT 0,
+			merged_pr_count     INTEGER     DEFAULT 0,
+			avg_merge_time_secs BIGINT      DEFAULT 0,
+			min_merge_time_secs BIGINT      DEFAULT 0,
+			max_merge_time_secs BIGINT      DEFAULT 0,
+			updated_at          TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS pull_requests (
 			id                      TEXT PRIMARY KEY,
-			repo_full_name          TEXT    NOT NULL,
-			number                  INTEGER NOT NULL,
-			title                   TEXT    DEFAULT '',
-			author_login            TEXT    NOT NULL,
-			merged                  INTEGER DEFAULT 0,
-			opened_at               DATETIME NOT NULL,
-			merged_at               DATETIME,
-			merge_time_secs         INTEGER,
-			review_count            INTEGER DEFAULT 0,
-			changes_requested_count INTEGER DEFAULT 0,
+			repo_full_name          TEXT        NOT NULL,
+			number                  INTEGER     NOT NULL,
+			title                   TEXT        DEFAULT '',
+			author_login            TEXT        NOT NULL,
+			merged                  BOOLEAN     DEFAULT FALSE,
+			opened_at               TIMESTAMPTZ NOT NULL,
+			merged_at               TIMESTAMPTZ,
+			merge_time_secs         BIGINT,
+			review_count            INTEGER     DEFAULT 0,
+			changes_requested_count INTEGER     DEFAULT 0,
 			UNIQUE(repo_full_name, number)
-		);
-
-		CREATE TABLE IF NOT EXISTS reviews (
+		)`,
+		`CREATE TABLE IF NOT EXISTS reviews (
 			id             TEXT PRIMARY KEY,
-			repo_full_name TEXT NOT NULL,
-			pr_number      INTEGER NOT NULL,
-			reviewer_login TEXT NOT NULL,
-			state          TEXT NOT NULL,
-			submitted_at   DATETIME NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS users (
+			repo_full_name TEXT        NOT NULL,
+			pr_number      INTEGER     NOT NULL,
+			reviewer_login TEXT        NOT NULL,
+			state          TEXT        NOT NULL,
+			submitted_at   TIMESTAMPTZ NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS users (
 			login        TEXT PRIMARY KEY,
-			name         TEXT    DEFAULT '',
-			avatar_url   TEXT    DEFAULT '',
-			bio          TEXT    DEFAULT '',
-			public_repos INTEGER DEFAULT 0,
-			followers    INTEGER DEFAULT 0,
-			company      TEXT    DEFAULT '',
-			location     TEXT    DEFAULT '',
-			is_org       INTEGER DEFAULT 0,
-			last_fetched DATETIME
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_prs_repo     ON pull_requests(repo_full_name);
-		CREATE INDEX IF NOT EXISTS idx_prs_author   ON pull_requests(author_login);
-		CREATE INDEX IF NOT EXISTS idx_prs_merged   ON pull_requests(merged);
-		CREATE INDEX IF NOT EXISTS idx_rev_reviewer ON reviews(reviewer_login);
-		CREATE INDEX IF NOT EXISTS idx_rev_repo_pr  ON reviews(repo_full_name, pr_number);
-		CREATE INDEX IF NOT EXISTS idx_repos_org    ON repos(org_name);
-
-		CREATE TABLE IF NOT EXISTS page_visits (
+			name         TEXT        DEFAULT '',
+			avatar_url   TEXT        DEFAULT '',
+			bio          TEXT        DEFAULT '',
+			public_repos INTEGER     DEFAULT 0,
+			followers    INTEGER     DEFAULT 0,
+			company      TEXT        DEFAULT '',
+			location     TEXT        DEFAULT '',
+			is_org       BOOLEAN     DEFAULT FALSE,
+			last_fetched TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_repo     ON pull_requests(repo_full_name)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_author   ON pull_requests(author_login)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_merged   ON pull_requests(merged)`,
+		`CREATE INDEX IF NOT EXISTS idx_rev_reviewer ON reviews(reviewer_login)`,
+		`CREATE INDEX IF NOT EXISTS idx_rev_repo_pr  ON reviews(repo_full_name, pr_number)`,
+		`CREATE INDEX IF NOT EXISTS idx_repos_org    ON repos(org_name)`,
+		`CREATE TABLE IF NOT EXISTS page_visits (
 			path         TEXT PRIMARY KEY,
 			kind         TEXT NOT NULL,
 			label        TEXT NOT NULL,
-			count        INTEGER DEFAULT 1,
-			last_visited DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE IF NOT EXISTS page_hi (
+			count        INTEGER     DEFAULT 1,
+			last_visited TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS page_hi (
 			path  TEXT PRIMARY KEY,
 			count INTEGER DEFAULT 0
-		);
-
-		CREATE TABLE IF NOT EXISTS page_hi_reactions (
+		)`,
+		`CREATE TABLE IF NOT EXISTS page_hi_reactions (
 			path     TEXT NOT NULL,
 			reaction TEXT NOT NULL,
 			count    INTEGER DEFAULT 0,
 			PRIMARY KEY (path, reaction)
-		);
-
-		CREATE TABLE IF NOT EXISTS page_hi_log (
-			id       INTEGER PRIMARY KEY AUTOINCREMENT,
-			path     TEXT NOT NULL,
-			reaction TEXT NOT NULL DEFAULT 'wave',
-			ts       DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_hi_log_path ON page_hi_log(path);
-		CREATE INDEX IF NOT EXISTS idx_hi_log_ts   ON page_hi_log(ts);
-	`)
-	return err
+		)`,
+		`CREATE TABLE IF NOT EXISTS page_hi_log (
+			id       BIGSERIAL   PRIMARY KEY,
+			path     TEXT        NOT NULL,
+			reaction TEXT        NOT NULL DEFAULT 'wave',
+			ts       TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_hi_log_path ON page_hi_log(path)`,
+		`CREATE INDEX IF NOT EXISTS idx_hi_log_ts   ON page_hi_log(ts)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.conn.Exec(s); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	return nil
 }
 
 // ── Upserts ────────────────────────────────────────────────────────────────────
@@ -220,13 +216,13 @@ func (d *DB) migrate() error {
 func (d *DB) UpsertRepo(r Repo) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO repos (full_name, owner, name, description, stars, language, org_name, sync_status, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
 		ON CONFLICT(full_name) DO UPDATE SET
-			description  = excluded.description,
-			stars        = excluded.stars,
-			language     = excluded.language,
-			org_name     = excluded.org_name,
-			updated_at   = CURRENT_TIMESTAMP
+			description  = EXCLUDED.description,
+			stars        = EXCLUDED.stars,
+			language     = EXCLUDED.language,
+			org_name     = EXCLUDED.org_name,
+			updated_at   = NOW()
 	`, r.FullName, r.Owner, r.Name, r.Description, r.Stars, r.Language, r.OrgName, r.SyncStatus)
 	return err
 }
@@ -234,64 +230,57 @@ func (d *DB) UpsertRepo(r Repo) error {
 func (d *DB) UpdateSyncStatus(fullName, status string) error {
 	if status == "done" {
 		_, err := d.conn.Exec(
-			`UPDATE repos SET sync_status=?, last_synced=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE full_name=?`,
+			`UPDATE repos SET sync_status=$1, last_synced=NOW(), updated_at=NOW() WHERE full_name=$2`,
 			status, fullName)
 		return err
 	}
 	_, err := d.conn.Exec(
-		`UPDATE repos SET sync_status=?, updated_at=CURRENT_TIMESTAMP WHERE full_name=?`,
+		`UPDATE repos SET sync_status=$1, updated_at=NOW() WHERE full_name=$2`,
 		status, fullName)
 	return err
 }
 
 func (d *DB) UpsertPR(pr PullRequest) error {
-	var mergedAt, mergeTimeSecs interface{}
-	if pr.MergedAt != nil {
-		mergedAt = pr.MergedAt.UTC().Format(time.RFC3339)
-	}
-	if pr.MergeTimeSecs != nil {
-		mergeTimeSecs = *pr.MergeTimeSecs
-	}
 	_, err := d.conn.Exec(`
 		INSERT INTO pull_requests
 			(id, repo_full_name, number, title, author_login, merged, opened_at, merged_at, merge_time_secs, review_count, changes_requested_count)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT(repo_full_name, number) DO UPDATE SET
-			title                   = excluded.title,
-			merged                  = excluded.merged,
-			merged_at               = excluded.merged_at,
-			merge_time_secs         = excluded.merge_time_secs,
-			review_count            = excluded.review_count,
-			changes_requested_count = excluded.changes_requested_count
+			title                   = EXCLUDED.title,
+			merged                  = EXCLUDED.merged,
+			merged_at               = EXCLUDED.merged_at,
+			merge_time_secs         = EXCLUDED.merge_time_secs,
+			review_count            = EXCLUDED.review_count,
+			changes_requested_count = EXCLUDED.changes_requested_count
 	`, pr.ID, pr.RepoFullName, pr.Number, pr.Title, pr.AuthorLogin, pr.Merged,
-		pr.OpenedAt.UTC().Format(time.RFC3339), mergedAt, mergeTimeSecs,
+		pr.OpenedAt.UTC(), pr.MergedAt, pr.MergeTimeSecs,
 		pr.ReviewCount, pr.ChangesRequestedCount)
 	return err
 }
 
 func (d *DB) UpsertReview(r Review) error {
 	_, err := d.conn.Exec(`
-		INSERT OR IGNORE INTO reviews (id, repo_full_name, pr_number, reviewer_login, state, submitted_at)
-		VALUES (?,?,?,?,?,?)
-	`, r.ID, r.RepoFullName, r.PRNumber, r.ReviewerLogin, r.State,
-		r.SubmittedAt.UTC().Format(time.RFC3339))
+		INSERT INTO reviews (id, repo_full_name, pr_number, reviewer_login, state, submitted_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		ON CONFLICT(id) DO NOTHING
+	`, r.ID, r.RepoFullName, r.PRNumber, r.ReviewerLogin, r.State, r.SubmittedAt.UTC())
 	return err
 }
 
 func (d *DB) UpsertUser(u User) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO users (login, name, avatar_url, bio, public_repos, followers, company, location, is_org, last_fetched)
-		VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
 		ON CONFLICT(login) DO UPDATE SET
-			name         = excluded.name,
-			avatar_url   = excluded.avatar_url,
-			bio          = excluded.bio,
-			public_repos = excluded.public_repos,
-			followers    = excluded.followers,
-			company      = excluded.company,
-			location     = excluded.location,
-			is_org       = excluded.is_org,
-			last_fetched = CURRENT_TIMESTAMP
+			name         = EXCLUDED.name,
+			avatar_url   = EXCLUDED.avatar_url,
+			bio          = EXCLUDED.bio,
+			public_repos = EXCLUDED.public_repos,
+			followers    = EXCLUDED.followers,
+			company      = EXCLUDED.company,
+			location     = EXCLUDED.location,
+			is_org       = EXCLUDED.is_org,
+			last_fetched = NOW()
 	`, u.Login, u.Name, u.AvatarURL, u.Bio, u.PublicRepos, u.Followers,
 		u.Company, u.Location, u.IsOrg)
 	return err
@@ -302,13 +291,13 @@ func (d *DB) UpsertUser(u User) error {
 func (d *DB) UpdateRepoStats(fullName string) error {
 	_, err := d.conn.Exec(`
 		UPDATE repos SET
-			pr_count            = (SELECT COUNT(*)   FROM pull_requests WHERE repo_full_name=? AND merged=1),
-			merged_pr_count     = (SELECT COUNT(*)   FROM pull_requests WHERE repo_full_name=? AND merged=1),
-			avg_merge_time_secs = COALESCE((SELECT AVG(merge_time_secs) FROM pull_requests WHERE repo_full_name=? AND merged=1 AND merge_time_secs IS NOT NULL), 0),
-			min_merge_time_secs = COALESCE((SELECT MIN(merge_time_secs) FROM pull_requests WHERE repo_full_name=? AND merged=1 AND merge_time_secs IS NOT NULL), 0),
-			max_merge_time_secs = COALESCE((SELECT MAX(merge_time_secs) FROM pull_requests WHERE repo_full_name=? AND merged=1 AND merge_time_secs IS NOT NULL), 0),
-			updated_at          = CURRENT_TIMESTAMP
-		WHERE full_name=?
+			pr_count            = (SELECT COUNT(*)   FROM pull_requests WHERE repo_full_name=$1 AND merged=TRUE),
+			merged_pr_count     = (SELECT COUNT(*)   FROM pull_requests WHERE repo_full_name=$2 AND merged=TRUE),
+			avg_merge_time_secs = COALESCE((SELECT AVG(merge_time_secs) FROM pull_requests WHERE repo_full_name=$3 AND merged=TRUE AND merge_time_secs IS NOT NULL)::BIGINT, 0),
+			min_merge_time_secs = COALESCE((SELECT MIN(merge_time_secs) FROM pull_requests WHERE repo_full_name=$4 AND merged=TRUE AND merge_time_secs IS NOT NULL), 0),
+			max_merge_time_secs = COALESCE((SELECT MAX(merge_time_secs) FROM pull_requests WHERE repo_full_name=$5 AND merged=TRUE AND merge_time_secs IS NOT NULL), 0),
+			updated_at          = NOW()
+		WHERE full_name=$6
 	`, fullName, fullName, fullName, fullName, fullName, fullName)
 	return err
 }
@@ -317,12 +306,12 @@ func (d *DB) UpdateRepoStats(fullName string) error {
 
 func (d *DB) GetRepo(fullName string) (*Repo, error) {
 	r := &Repo{}
-	var lastSynced sql.NullString
+	var lastSynced sql.NullTime
 	err := d.conn.QueryRow(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
-		FROM repos WHERE full_name=?
+		FROM repos WHERE full_name=$1
 	`, fullName).Scan(
 		&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
 		&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
@@ -335,7 +324,7 @@ func (d *DB) GetRepo(fullName string) (*Repo, error) {
 		return nil, err
 	}
 	if lastSynced.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastSynced.String)
+		t := lastSynced.Time
 		r.LastSynced = &t
 	}
 	return r, nil
@@ -343,10 +332,10 @@ func (d *DB) GetRepo(fullName string) (*Repo, error) {
 
 func (d *DB) GetUser(login string) (*User, error) {
 	u := &User{}
-	var lastFetched sql.NullString
+	var lastFetched sql.NullTime
 	err := d.conn.QueryRow(`
 		SELECT login, name, avatar_url, bio, public_repos, followers, company, location, is_org, last_fetched
-		FROM users WHERE login=?
+		FROM users WHERE login=$1
 	`, login).Scan(
 		&u.Login, &u.Name, &u.AvatarURL, &u.Bio, &u.PublicRepos, &u.Followers,
 		&u.Company, &u.Location, &u.IsOrg, &lastFetched,
@@ -358,7 +347,7 @@ func (d *DB) GetUser(login string) (*User, error) {
 		return nil, err
 	}
 	if lastFetched.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", lastFetched.String)
+		t := lastFetched.Time
 		u.LastFetched = &t
 	}
 	return u, nil
@@ -372,7 +361,7 @@ func (d *DB) LeaderboardReposBySpeed(order string, limit int) ([]LeaderboardEntr
 		FROM repos
 		WHERE merged_pr_count >= 3 AND avg_merge_time_secs > 0
 		ORDER BY avg_merge_time_secs %s
-		LIMIT ?`, order)
+		LIMIT $1`, order)
 	return d.queryEntries(q, limit)
 }
 
@@ -384,7 +373,7 @@ func (d *DB) LeaderboardReviewers(limit int) ([]LeaderboardEntry, error) {
 		WHERE r.state IN ('APPROVED','CHANGES_REQUESTED','COMMENTED')
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT ?`, limit)
+		LIMIT $1`, limit)
 }
 
 func (d *DB) LeaderboardGatekeepers(limit int) ([]LeaderboardEntry, error) {
@@ -395,7 +384,7 @@ func (d *DB) LeaderboardGatekeepers(limit int) ([]LeaderboardEntry, error) {
 		WHERE r.state='CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT ?`, limit)
+		LIMIT $1`, limit)
 }
 
 func (d *DB) LeaderboardAuthors(limit int) ([]LeaderboardEntry, error) {
@@ -403,10 +392,10 @@ func (d *DB) LeaderboardAuthors(limit int) ([]LeaderboardEntry, error) {
 		SELECT p.author_login, COUNT(*) as cnt, COALESCE(u.avatar_url,'')
 		FROM pull_requests p
 		LEFT JOIN users u ON u.login=p.author_login
-		WHERE p.merged=1
+		WHERE p.merged=TRUE
 		GROUP BY p.author_login
 		ORDER BY cnt DESC
-		LIMIT ?`, limit)
+		LIMIT $1`, limit)
 }
 
 func (d *DB) LeaderboardCleanApprovals(limit int) ([]LeaderboardEntry, error) {
@@ -415,11 +404,11 @@ func (d *DB) LeaderboardCleanApprovals(limit int) ([]LeaderboardEntry, error) {
 		       COUNT(*) as total,
 		       CAST(ROUND(100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct
 		FROM pull_requests
-		WHERE merged=1 AND review_count>0
+		WHERE merged=TRUE AND review_count>0
 		GROUP BY repo_full_name
-		HAVING total >= 5
+		HAVING COUNT(*) >= 5
 		ORDER BY clean_pct DESC
-		LIMIT ?`, limit)
+		LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -482,10 +471,10 @@ func (d *DB) RepoTopReviewers(fullName string, limit int) ([]ReviewerStats, erro
 		       SUM(CASE WHEN r.state='COMMENTED'          THEN 1 ELSE 0 END)
 		FROM reviews r
 		LEFT JOIN users u ON u.login=r.reviewer_login
-		WHERE r.repo_full_name=?
+		WHERE r.repo_full_name=$1
 		GROUP BY r.reviewer_login
 		ORDER BY total DESC
-		LIMIT ?
+		LIMIT $2
 	`, fullName, limit)
 	if err != nil {
 		return nil, err
@@ -507,9 +496,9 @@ func (d *DB) RecentMergedPRs(fullName string, limit int) ([]PullRequest, error) 
 		SELECT id, repo_full_name, number, title, author_login, merged,
 		       opened_at, merged_at, merge_time_secs, review_count, changes_requested_count
 		FROM pull_requests
-		WHERE repo_full_name=? AND merged=1
+		WHERE repo_full_name=$1 AND merged=TRUE
 		ORDER BY merged_at DESC
-		LIMIT ?
+		LIMIT $2
 	`, fullName, limit)
 	if err != nil {
 		return nil, err
@@ -530,7 +519,7 @@ func (d *DB) UserReviewerStats(login string) (*ReviewerStats, error) {
 		       SUM(CASE WHEN r.state='COMMENTED'         THEN 1 ELSE 0 END)
 		FROM reviews r
 		LEFT JOIN users u ON u.login=r.reviewer_login
-		WHERE r.reviewer_login=?
+		WHERE r.reviewer_login=$1
 		GROUP BY r.reviewer_login
 	`, login).Scan(&s.AvatarURL, &s.TotalReviews, &s.Approvals, &s.ChangesRequested, &s.Comments)
 	if err == sql.ErrNoRows {
@@ -543,10 +532,10 @@ func (d *DB) UserAuthorStats(login string) (*AuthorStats, error) {
 	s := &AuthorStats{Login: login}
 	err := d.conn.QueryRow(`
 		SELECT COUNT(*),
-		       SUM(CASE WHEN merged=1 THEN 1 ELSE 0 END),
-		       COALESCE(AVG(CASE WHEN merged=1 THEN merge_time_secs END), 0)
+		       SUM(CASE WHEN merged=TRUE THEN 1 ELSE 0 END),
+		       COALESCE(AVG(CASE WHEN merged=TRUE THEN merge_time_secs END), 0)
 		FROM pull_requests
-		WHERE author_login=?
+		WHERE author_login=$1
 	`, login).Scan(&s.TotalPRs, &s.MergedPRs, &s.AvgMergeTimeSecs)
 	if err == sql.ErrNoRows {
 		return s, nil
@@ -559,7 +548,7 @@ func (d *DB) UserReviewerRank(login string) (int, error) {
 		SELECT rank FROM (
 			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
 			FROM reviews GROUP BY reviewer_login
-		) WHERE reviewer_login=?
+		) sub WHERE reviewer_login=$1
 	`, login)
 }
 
@@ -568,7 +557,7 @@ func (d *DB) UserGatekeeperRank(login string) (int, error) {
 		SELECT rank FROM (
 			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
 			FROM reviews WHERE state='CHANGES_REQUESTED' GROUP BY reviewer_login
-		) WHERE reviewer_login=?
+		) sub WHERE reviewer_login=$1
 	`, login)
 }
 
@@ -577,7 +566,7 @@ func (d *DB) RepoSpeedRank(fullName string) (int, error) {
 		SELECT rank FROM (
 			SELECT full_name, ROW_NUMBER() OVER (ORDER BY avg_merge_time_secs ASC) as rank
 			FROM repos WHERE merged_pr_count>=3 AND avg_merge_time_secs>0
-		) WHERE full_name=?
+		) sub WHERE full_name=$1
 	`, fullName)
 }
 
@@ -586,7 +575,7 @@ func (d *DB) RepoGraveyardRank(fullName string) (int, error) {
 		SELECT rank FROM (
 			SELECT full_name, ROW_NUMBER() OVER (ORDER BY avg_merge_time_secs DESC) as rank
 			FROM repos WHERE merged_pr_count>=3 AND avg_merge_time_secs>0
-		) WHERE full_name=?
+		) sub WHERE full_name=$1
 	`, fullName)
 }
 
@@ -594,8 +583,8 @@ func (d *DB) UserAuthorRank(login string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
 			SELECT author_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM pull_requests WHERE merged=1 GROUP BY author_login
-		) WHERE author_login=?
+			FROM pull_requests WHERE merged=TRUE GROUP BY author_login
+		) sub WHERE author_login=$1
 	`, login)
 }
 
@@ -615,7 +604,7 @@ func (d *DB) OrgRepos(orgName string) ([]Repo, error) {
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
-		FROM repos WHERE org_name=?
+		FROM repos WHERE org_name=$1
 		ORDER BY merged_pr_count DESC
 	`, orgName)
 	if err != nil {
@@ -631,10 +620,10 @@ func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEnt
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
 		LEFT JOIN users u ON u.login=r.reviewer_login
-		WHERE repo.org_name=?
+		WHERE repo.org_name=$1
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT ?`, limit)
+		LIMIT $2`, limit)
 }
 
 func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardEntry, error) {
@@ -643,17 +632,17 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
 		LEFT JOIN users u ON u.login=r.reviewer_login
-		WHERE repo.org_name=? AND r.state='CHANGES_REQUESTED'
+		WHERE repo.org_name=$1 AND r.state='CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT ?`, limit)
+		LIMIT $2`, limit)
 }
 
 // ── Global stats ───────────────────────────────────────────────────────────────
 
 func (d *DB) TotalStats() (repos, prs, reviews int) {
 	d.conn.QueryRow(`SELECT COUNT(*) FROM repos WHERE sync_status='done'`).Scan(&repos)
-	d.conn.QueryRow(`SELECT COUNT(*) FROM pull_requests WHERE merged=1`).Scan(&prs)
+	d.conn.QueryRow(`SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE`).Scan(&prs)
 	d.conn.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviews)
 	return
 }
@@ -689,17 +678,16 @@ type CleanLeaderboardRow struct {
 }
 
 func (d *DB) FullLeaderboardRepoSpeed(order string, limit, offset int) ([]RepoLeaderboardRow, error) {
-	// Cast all time columns to avoid float64/int64 ambiguity from stored AVG() values.
 	q := fmt.Sprintf(`
 		SELECT full_name,
-		       CAST(avg_merge_time_secs AS INTEGER),
-		       CAST(min_merge_time_secs AS INTEGER),
-		       CAST(max_merge_time_secs AS INTEGER),
+		       avg_merge_time_secs,
+		       min_merge_time_secs,
+		       max_merge_time_secs,
 		       merged_pr_count
 		FROM repos
 		WHERE merged_pr_count >= 3 AND avg_merge_time_secs > 0
 		ORDER BY avg_merge_time_secs %s
-		LIMIT ? OFFSET ?`, order)
+		LIMIT $1 OFFSET $2`, order)
 	rows, err := d.conn.Query(q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("FullLeaderboardRepoSpeed: %w", err)
@@ -731,7 +719,7 @@ func (d *DB) FullLeaderboardReviewers(limit, offset int) ([]UserLeaderboardRow, 
 		LEFT JOIN users u ON u.login = r.reviewer_login
 		GROUP BY r.reviewer_login
 		ORDER BY total DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +739,7 @@ func (d *DB) FullLeaderboardGatekeepers(limit, offset int) ([]UserLeaderboardRow
 		WHERE r.state = 'CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
 		ORDER BY total DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -767,13 +755,13 @@ func (d *DB) FullLeaderboardAuthors(limit, offset int) ([]UserLeaderboardRow, er
 		       0 as approvals,
 		       0 as changes,
 		       COUNT(*) as merged_prs,
-		       CAST(COALESCE(AVG(p.merge_time_secs), 0) AS INTEGER) as avg_secs
+		       COALESCE(AVG(p.merge_time_secs), 0)::BIGINT as avg_secs
 		FROM pull_requests p
 		LEFT JOIN users u ON u.login = p.author_login
-		WHERE p.merged = 1
+		WHERE p.merged = TRUE
 		GROUP BY p.author_login
 		ORDER BY merged DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("FullLeaderboardAuthors: %w", err)
 	}
@@ -800,11 +788,11 @@ func (d *DB) FullLeaderboardCleanApprovals(limit, offset int) ([]CleanLeaderboar
 		       CAST(ROUND(100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct,
 		       COALESCE(AVG(merge_time_secs), 0) as avg_secs
 		FROM pull_requests
-		WHERE merged=1 AND review_count>0
+		WHERE merged=TRUE AND review_count>0
 		GROUP BY repo_full_name
-		HAVING total >= 5
+		HAVING COUNT(*) >= 5
 		ORDER BY clean_pct DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -844,8 +832,6 @@ func scanUserRows(rows *sql.Rows, startRank int) ([]UserLeaderboardRow, error) {
 
 // ── Search ─────────────────────────────────────────────────────────────────────
 
-// UserContributedRepos returns repos where login authored PRs or submitted reviews,
-// ordered by merged PR count descending.
 func (d *DB) UserContributedRepos(login string, limit int) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT r.full_name, r.owner, r.name, r.description, r.stars, r.language, r.org_name,
@@ -853,13 +839,13 @@ func (d *DB) UserContributedRepos(login string, limit int) ([]Repo, error) {
 		       r.avg_merge_time_secs, r.min_merge_time_secs, r.max_merge_time_secs
 		FROM repos r
 		WHERE r.full_name IN (
-			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login=?
+			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login=$1
 			UNION
-			SELECT DISTINCT repo_full_name FROM reviews WHERE reviewer_login=?
+			SELECT DISTINCT repo_full_name FROM reviews WHERE reviewer_login=$2
 		)
 		AND r.merged_pr_count > 0
 		ORDER BY r.merged_pr_count DESC
-		LIMIT ?
+		LIMIT $3
 	`, login, login, limit)
 	if err != nil {
 		return nil, err
@@ -874,9 +860,9 @@ func (d *DB) SearchRepos(query string, limit int) ([]Repo, error) {
 		       last_synced, sync_status, pr_count, merged_pr_count,
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
 		FROM repos
-		WHERE full_name LIKE ? OR name LIKE ?
+		WHERE full_name ILIKE $1 OR name ILIKE $2
 		ORDER BY stars DESC
-		LIMIT ?
+		LIMIT $3
 	`, "%"+query+"%", "%"+query+"%", limit)
 	if err != nil {
 		return nil, err
@@ -891,7 +877,7 @@ func scanRepos(rows *sql.Rows) ([]Repo, error) {
 	var repos []Repo
 	for rows.Next() {
 		var r Repo
-		var lastSynced sql.NullString
+		var lastSynced sql.NullTime
 		if err := rows.Scan(
 			&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
 			&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
@@ -901,7 +887,7 @@ func scanRepos(rows *sql.Rows) ([]Repo, error) {
 			continue
 		}
 		if lastSynced.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", lastSynced.String)
+			t := lastSynced.Time
 			r.LastSynced = &t
 		}
 		repos = append(repos, r)
@@ -913,7 +899,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 	var prs []PullRequest
 	for rows.Next() {
 		var pr PullRequest
-		var mergedAt sql.NullString
+		var mergedAt sql.NullTime
 		var mts sql.NullInt64
 		if err := rows.Scan(
 			&pr.ID, &pr.RepoFullName, &pr.Number, &pr.Title, &pr.AuthorLogin, &pr.Merged,
@@ -922,7 +908,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 			continue
 		}
 		if mergedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, mergedAt.String)
+			t := mergedAt.Time
 			pr.MergedAt = &t
 		}
 		if mts.Valid {
@@ -936,26 +922,26 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 // ── Page visits (for "Try:" pills) ────────────────────────────────────────────
 
 type PageVisit struct {
-	Path  string // URL path, e.g. "/repo/golang/go"
-	Kind  string // "repo", "user", "org"
-	Label string // display text, e.g. "golang/go"
+	Path  string
+	Kind  string
+	Label string
 	Count int
 }
 
 func (d *DB) RecordVisit(path, kind, label string) {
 	d.conn.Exec(`
 		INSERT INTO page_visits (path, kind, label, count, last_visited)
-		VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+		VALUES ($1,$2,$3,1,NOW())
 		ON CONFLICT(path) DO UPDATE SET
-			count        = count + 1,
-			last_visited = CURRENT_TIMESTAMP
+			count        = page_visits.count + 1,
+			last_visited = NOW()
 	`, path, kind, label)
 }
 
 func (d *DB) PopularVisits(limit int) ([]PageVisit, error) {
 	rows, err := d.conn.Query(`
 		SELECT path, kind, label, count FROM page_visits
-		ORDER BY count DESC LIMIT ?
+		ORDER BY count DESC LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err
@@ -968,7 +954,7 @@ func (d *DB) RecentVisits(limit int, exclude []string) ([]PageVisit, error) {
 	if len(exclude) == 0 {
 		rows, err := d.conn.Query(`
 			SELECT path, kind, label, count FROM page_visits
-			ORDER BY last_visited DESC LIMIT ?
+			ORDER BY last_visited DESC LIMIT $1
 		`, limit)
 		if err != nil {
 			return nil, err
@@ -976,19 +962,19 @@ func (d *DB) RecentVisits(limit int, exclude []string) ([]PageVisit, error) {
 		defer rows.Close()
 		return scanVisits(rows)
 	}
-	// Build NOT IN clause.
-	placeholders := "?"
+	// Build NOT IN clause with numbered placeholders.
+	placeholders := "$1"
 	args := []interface{}{exclude[0]}
-	for _, p := range exclude[1:] {
-		placeholders += ",?"
+	for i, p := range exclude[1:] {
+		placeholders += fmt.Sprintf(",$%d", i+2)
 		args = append(args, p)
 	}
 	args = append(args, limit)
 	rows, err := d.conn.Query(`
 		SELECT path, kind, label, count FROM page_visits
 		WHERE path NOT IN (`+placeholders+`)
-		ORDER BY last_visited DESC LIMIT ?
-	`, args...)
+		ORDER BY last_visited DESC LIMIT $`+fmt.Sprintf("%d", len(args)),
+		args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,7 +1008,7 @@ type HiWallPage struct {
 // HiGetAll returns the total hi count, per-reaction breakdown, and today's count for a path.
 func (d *DB) HiGetAll(path string) (total int, reactions map[string]int, todayCount int) {
 	reactions = make(map[string]int)
-	rows, err := d.conn.Query(`SELECT reaction, count FROM page_hi_reactions WHERE path=?`, path)
+	rows, err := d.conn.Query(`SELECT reaction, count FROM page_hi_reactions WHERE path=$1`, path)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -1036,7 +1022,7 @@ func (d *DB) HiGetAll(path string) (total int, reactions map[string]int, todayCo
 	}
 	d.conn.QueryRow(`
 		SELECT COUNT(*) FROM page_hi_log
-		WHERE path=? AND ts > datetime('now','-1 day')
+		WHERE path=$1 AND ts > NOW() - INTERVAL '1 day'
 	`, path).Scan(&todayCount)
 	return
 }
@@ -1044,10 +1030,10 @@ func (d *DB) HiGetAll(path string) (total int, reactions map[string]int, todayCo
 // HiIncrementReaction records a reaction and returns the updated totals.
 func (d *DB) HiIncrementReaction(path, reaction string) (total int, reactions map[string]int, todayCount int) {
 	d.conn.Exec(`
-		INSERT INTO page_hi_reactions (path, reaction, count) VALUES (?, ?, 1)
-		ON CONFLICT(path, reaction) DO UPDATE SET count = count + 1
+		INSERT INTO page_hi_reactions (path, reaction, count) VALUES ($1,$2,1)
+		ON CONFLICT(path, reaction) DO UPDATE SET count = page_hi_reactions.count + 1
 	`, path, reaction)
-	d.conn.Exec(`INSERT INTO page_hi_log (path, reaction) VALUES (?, ?)`, path, reaction)
+	d.conn.Exec(`INSERT INTO page_hi_log (path, reaction) VALUES ($1,$2)`, path, reaction)
 	return d.HiGetAll(path)
 }
 
@@ -1060,12 +1046,12 @@ func (d *DB) HiTopWallPages(limit int) ([]HiWallPage, error) {
 			COALESCE(v.kind, '')      AS kind,
 			SUM(r.count)              AS total,
 			(SELECT COUNT(*) FROM page_hi_log l
-			 WHERE l.path=r.path AND l.ts > datetime('now','-1 day')) AS today
+			 WHERE l.path=r.path AND l.ts > NOW() - INTERVAL '1 day') AS today
 		FROM page_hi_reactions r
 		LEFT JOIN page_visits v ON v.path = r.path
-		GROUP BY r.path
+		GROUP BY r.path, v.label, v.kind
 		ORDER BY total DESC
-		LIMIT ?
+		LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err
@@ -1088,8 +1074,8 @@ func (d *DB) HiTopWallPages(limit int) ([]HiWallPage, error) {
 func (d *DB) RandomTrackedUsers(limit int) ([]User, error) {
 	rows, err := d.conn.Query(`
 		SELECT login, name, avatar_url FROM users
-		WHERE avatar_url != '' AND is_org = 0
-		ORDER BY RANDOM() LIMIT ?
+		WHERE avatar_url != '' AND NOT is_org
+		ORDER BY RANDOM() LIMIT $1
 	`, limit)
 	if err != nil {
 		return nil, err
@@ -1113,11 +1099,11 @@ func (d *DB) UserPeerReviewers(login string, limit int) ([]User, error) {
 		FROM users u
 		JOIN reviews r ON r.reviewer_login = u.login
 		WHERE r.repo_full_name IN (
-			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login = ?
+			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login = $1
 		)
-		AND r.reviewer_login != ?
+		AND r.reviewer_login != $2
 		AND u.avatar_url != ''
-		ORDER BY RANDOM() LIMIT ?
+		ORDER BY RANDOM() LIMIT $3
 	`, login, login, limit)
 	if err != nil {
 		return nil, err

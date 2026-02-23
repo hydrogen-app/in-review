@@ -47,7 +47,7 @@ func main() {
 
 	// Open DB read-only to check which repos are already synced.
 	// We do NOT start workers here — the main server owns all SQLite writes.
-	database, err := db.New(cfg.DBPath)
+	database, err := db.New(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}

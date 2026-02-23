@@ -7,7 +7,7 @@ Live at [inreview.dev](https://inreview.dev).
 ## Stack
 
 - Go 1.21+
-- SQLite (via `modernc.org/sqlite` — pure Go, no cgo)
+- PostgreSQL
 - Redis (sync queue, response cache, rate limiting)
 - HTMX (no JS build step)
 
@@ -16,21 +16,16 @@ Live at [inreview.dev](https://inreview.dev).
 ### Services
 
 1. **Go app** — this repo. Set the start command to `go run .` or build with `go build -o server . && ./server`.
-2. **Redis** — add a Redis plugin from the Railway dashboard. The `REDIS_URL` env var is injected automatically.
-
-### Volumes
-
-SQLite writes to disk, so you need a persistent volume mounted at the `DB_PATH` directory.
-
-In Railway: go to your app service → **Volumes** → add a volume mounted at `/data`, then set `DB_PATH=/data/inreview.db`.
+2. **PostgreSQL** — add a Postgres plugin from the Railway dashboard. The `DATABASE_URL` env var is injected automatically.
+3. **Redis** — add a Redis plugin from the Railway dashboard. The `REDIS_URL` env var is injected automatically.
 
 ### Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `GITHUB_TOKEN` | Recommended | GitHub personal access token. Without it you get 60 API req/hr (unauthenticated) vs 5,000/hr. |
+| `DATABASE_URL` | Yes | Injected automatically by Railway's Postgres plugin. |
 | `REDIS_URL` | Yes | Injected automatically by Railway's Redis plugin. |
-| `DB_PATH` | Yes | Set to `/data/inreview.db` (or wherever your volume is mounted). |
 | `PORT` | No | Defaults to `8080`. Railway sets this automatically. |
 
 ### GitHub token
@@ -47,9 +42,13 @@ go run .
 
 Open [http://localhost:8080](http://localhost:8080).
 
-Requires a local Redis instance (`redis-server`). Defaults to `redis://localhost:6379`.
+Requires a local Postgres instance (defaults to `postgres://postgres:postgres@localhost:5432/inreview?sslmode=disable`) and Redis (`redis://localhost:6379`). The schema is created automatically on startup.
 
-On first boot, 20 popular repos are synced in the background to seed the leaderboards.
+On first boot, run the seed script to populate the leaderboards:
+
+```bash
+go run ./cmd/seed
+```
 
 ## How it works
 

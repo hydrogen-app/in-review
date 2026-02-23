@@ -4,15 +4,15 @@ import "os"
 
 type Config struct {
 	GitHubToken string
-	DBPath      string
+	DatabaseURL string
 	Port        string
 	RedisURL    string
 }
 
 func Load() *Config {
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "data/inreview.db"
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = "postgres://postgres:postgres@localhost:5432/inreview?sslmode=disable"
 	}
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -24,7 +24,7 @@ func Load() *Config {
 	}
 	return &Config{
 		GitHubToken: os.Getenv("GITHUB_TOKEN"),
-		DBPath:      dbPath,
+		DatabaseURL: databaseURL,
 		Port:        port,
 		RedisURL:    redisURL,
 	}
