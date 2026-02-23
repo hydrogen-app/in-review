@@ -38,7 +38,7 @@
         {{end}}
       </div>
       {{else}}
-      <p class="col-empty">Still syncing repos…</p>
+      <p class="col-empty">{{if .IsSyncing}}Syncing…{{else}}No review data yet.{{end}}</p>
       {{end}}
     </div>
 
@@ -56,7 +56,7 @@
         {{end}}
       </div>
       {{else}}
-      <p class="col-empty">Still syncing repos…</p>
+      <p class="col-empty">{{if .IsSyncing}}Syncing…{{else}}No data yet.{{end}}</p>
       {{end}}
     </div>
 

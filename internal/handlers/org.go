@@ -81,17 +81,21 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 
 	repos, _ := h.db.OrgRepos(orgName)
 
-	// Compute aggregate stats
-	var totalPRs, totalReviews int
+	// Compute aggregate stats and check if any repo is still syncing.
+	var totalPRs int
+	isSyncing := false
 	for _, rp := range repos {
 		totalPRs += rp.MergedPRCount
+		if rp.SyncStatus == "syncing" || h.worker.IsSyncing(rp.FullName) {
+			isSyncing = true
+		}
 	}
 
 	data := OrgData{
-		Org:             org,
-		Repos:           repos,
-		TotalMergedPRs:  totalPRs,
-		TotalReviews:    totalReviews,
+		Org:            org,
+		Repos:          repos,
+		TotalMergedPRs: totalPRs,
+		IsSyncing:      isSyncing,
 	}
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)

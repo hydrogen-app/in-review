@@ -814,6 +814,30 @@ func scanUserRows(rows *sql.Rows, startRank int) ([]UserLeaderboardRow, error) {
 
 // ── Search ─────────────────────────────────────────────────────────────────────
 
+// UserContributedRepos returns repos where login authored PRs or submitted reviews,
+// ordered by merged PR count descending.
+func (d *DB) UserContributedRepos(login string, limit int) ([]Repo, error) {
+	rows, err := d.conn.Query(`
+		SELECT r.full_name, r.owner, r.name, r.description, r.stars, r.language, r.org_name,
+		       r.last_synced, r.sync_status, r.pr_count, r.merged_pr_count,
+		       r.avg_merge_time_secs, r.min_merge_time_secs, r.max_merge_time_secs
+		FROM repos r
+		WHERE r.full_name IN (
+			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login=?
+			UNION
+			SELECT DISTINCT repo_full_name FROM reviews WHERE reviewer_login=?
+		)
+		AND r.merged_pr_count > 0
+		ORDER BY r.merged_pr_count DESC
+		LIMIT ?
+	`, login, login, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRepos(rows)
+}
+
 func (d *DB) SearchRepos(query string, limit int) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT full_name, owner, name, description, stars, language, org_name,

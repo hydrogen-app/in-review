@@ -25,19 +25,23 @@
   </div>
 
   <!-- ── Global Ranks ── -->
-  {{if or .ReviewerRank .GatekeeperRank}}
+  {{if or .ReviewerRank (or .GatekeeperRank .AuthorRank)}}
   <div class="rank-banner">
     {{if .ReviewerRank}}
     <div class="rank-pill">
-      <span class="rank-pill-icon">TOP</span>
-      <span>#{{.ReviewerRank}} Reviewer</span>
+      <a href="/leaderboard/reviewers">#{{.ReviewerRank}} Reviewer</a>
       <span class="rank-pill-sub">globally</span>
     </div>
     {{end}}
     {{if .GatekeeperRank}}
     <div class="rank-pill warn">
-      <span class="rank-pill-icon">GATE</span>
-      <span>#{{.GatekeeperRank}} Gatekeeper</span>
+      <a href="/leaderboard/gatekeepers">#{{.GatekeeperRank}} Gatekeeper</a>
+      <span class="rank-pill-sub">globally</span>
+    </div>
+    {{end}}
+    {{if .AuthorRank}}
+    <div class="rank-pill">
+      <a href="/leaderboard/authors">#{{.AuthorRank}} Author</a>
       <span class="rank-pill-sub">globally</span>
     </div>
     {{end}}
@@ -118,20 +122,30 @@
 
   </div><!-- /two-col -->
 
-  <!-- ── Popular Repos ── -->
-  {{if .PopularRepos}}
+  <!-- ── Contributed Repos ── -->
+  {{if .ContributedRepos}}
   <section class="section">
-    <h2 class="section-title">Active Repos</h2>
-    <div class="repo-chips">
-      {{range .PopularRepos}}
-      <a href="/repo/{{.FullName}}" class="repo-chip">
-        <span class="repo-chip-name mono">{{.FullName}}</span>
-        {{if .MergedPRCount}}
-        <span class="repo-chip-stat">{{.MergedPRCount}} PRs · {{formatDuration .AvgMergeTimeSecs}} avg</span>
+    <h2 class="section-title">Repos</h2>
+    <table class="pr-table">
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th>Merged PRs</th>
+          <th>Avg Merge Time</th>
+          <th>Fastest</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ContributedRepos}}
+        <tr class="pr-row">
+          <td><a href="/repo/{{.FullName}}" class="pr-link mono">{{.FullName}}</a></td>
+          <td>{{formatNumber .MergedPRCount}}</td>
+          <td><span class="time-chip {{if lt .AvgMergeTimeSecs 86400}}speed{{else if gt .AvgMergeTimeSecs 2592000}}slow{{end}}">{{formatDuration .AvgMergeTimeSecs}}</span></td>
+          <td class="speed">{{formatDuration .MinMergeTimeSecs}}</td>
+        </tr>
         {{end}}
-      </a>
-      {{end}}
-    </div>
+      </tbody>
+    </table>
   </section>
   {{end}}
 

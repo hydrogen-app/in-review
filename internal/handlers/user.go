@@ -10,13 +10,14 @@ import (
 )
 
 type UserData struct {
-	User           *db.User
-	ReviewerStats  *db.ReviewerStats
-	AuthorStats    *db.AuthorStats
-	ReviewerRank   int
-	GatekeeperRank int
-	PopularRepos   []db.Repo
-	IsOrg          bool
+	User             *db.User
+	ReviewerStats    *db.ReviewerStats
+	AuthorStats      *db.AuthorStats
+	ReviewerRank     int
+	GatekeeperRank   int
+	AuthorRank       int
+	ContributedRepos []db.Repo
+	IsOrg            bool
 }
 
 func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +96,8 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 	data.AuthorStats, _ = h.db.UserAuthorStats(username)
 	data.ReviewerRank, _ = h.db.UserReviewerRank(username)
 	data.GatekeeperRank, _ = h.db.UserGatekeeperRank(username)
-	data.PopularRepos, _ = h.db.SearchRepos(username, 5)
+	data.AuthorRank, _ = h.db.UserAuthorRank(username)
+	data.ContributedRepos, _ = h.db.UserContributedRepos(username, 10)
 
 	h.render(w, "user", data)
 }
