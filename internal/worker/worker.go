@@ -15,7 +15,7 @@ import (
 const (
 	maxPRsPerRepo = 5000
 	syncCooldown  = 6 * time.Hour
-	workerCount   = 3
+	workerCount   = 10
 	popTimeout    = 30 * time.Second
 )
 

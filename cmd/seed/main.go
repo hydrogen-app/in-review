@@ -1,10 +1,11 @@
 // seed queues a list of repos for sync via the InReview worker.
-// Run while the main server is running:
+// Run while the main server is running — the server's workers do the actual syncing.
 //
 //	go run ./cmd/seed
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -44,6 +45,8 @@ func main() {
 	_ = godotenv.Load()
 	cfg := config.Load()
 
+	// Open DB read-only to check which repos are already synced.
+	// We do NOT start workers here — the main server owns all SQLite writes.
 	database, err := db.New(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
@@ -56,43 +59,45 @@ func main() {
 	}
 	defer cache.Close()
 
+	// Worker is used only to push to the Redis queue — Start() is intentionally
+	// not called so no extra goroutines compete with the main server's workers.
 	ghClient := github.NewClient(cfg.GitHubToken)
 	w := worker.New(ghClient, database, cache)
-	w.Start()
 
 	queued := 0
 	for _, repo := range repos {
 		existing, _ := database.GetRepo(repo)
-		if existing != nil {
-			log.Printf("skip %s (already in DB)", repo)
+		if existing != nil && existing.SyncStatus == "done" {
+			log.Printf("skip %s (already synced)", repo)
 			continue
 		}
 		w.Queue(repo, false)
 		log.Printf("queued %s", repo)
 		queued++
-		if queued > 1 {
-			time.Sleep(500 * time.Millisecond)
-		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	if queued == 0 {
-		log.Println("nothing to seed — all repos already in DB")
+		log.Println("nothing to seed — all repos already synced")
 		return
 	}
 
-	log.Printf("queued %d repos, waiting for syncs to complete…", queued)
+	log.Printf("queued %d repos — main server workers will process them", queued)
+
+	// Poll Redis until all enqueued repos are no longer in-progress.
+	ctx := context.Background()
 	for {
-		allDone := true
+		pending := 0
 		for _, repo := range repos {
-			if w.IsSyncing(repo) {
-				allDone = false
-				break
+			if cache.QIsInProgress(ctx, repo) {
+				pending++
 			}
 		}
-		if allDone {
+		if pending == 0 {
 			break
 		}
-		time.Sleep(5 * time.Second)
+		log.Printf("waiting… %d repo(s) still syncing", pending)
+		time.Sleep(10 * time.Second)
 	}
 	log.Println("seed complete")
 }
