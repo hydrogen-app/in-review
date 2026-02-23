@@ -18,6 +18,7 @@ type UserData struct {
 	AuthorRank       int
 	ContributedRepos []db.Repo
 	IsOrg            bool
+	IsNGMI           bool
 }
 
 func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +99,7 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 	data.GatekeeperRank, _ = h.db.UserGatekeeperRank(username)
 	data.AuthorRank, _ = h.db.UserAuthorRank(username)
 	data.ContributedRepos, _ = h.db.UserContributedRepos(username, 10)
+	data.IsNGMI = data.ReviewerStats == nil || data.ReviewerStats.TotalReviews < 10
 
 	h.db.RecordVisit("/user/"+username, "user", username)
 	h.render(w, "user", data)

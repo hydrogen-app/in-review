@@ -1,4 +1,4 @@
-{{define "title"}}@{{.User.Login}} — InReview{{end}}
+{{define "title"}}@{{.User.Login}} — ngmi{{end}}
 
 {{define "content"}}
 <div class="page-wrap">
@@ -11,6 +11,7 @@
     <div class="user-info">
       <h1 class="page-title">
         {{if .User.Name}}{{.User.Name}}{{else}}@{{.User.Login}}{{end}}
+        {{if .IsNGMI}}<span class="ngmi-stamp">ngmi</span>{{end}}
       </h1>
       <p class="user-login mono">@{{.User.Login}}</p>
       {{if .User.Bio}}<p class="user-bio">{{.User.Bio}}</p>{{end}}

@@ -16,6 +16,8 @@ var hiReactions = []struct {
 	{"thumbs", "👍"},
 	{"heart", "❤️"},
 	{"fire", "🔥"},
+	{"gmi", "gmi"},
+	{"ngmi", "ngmi"},
 }
 
 // alreadySaidHi checks whether the user has said hi on this path and returns

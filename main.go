@@ -74,6 +74,6 @@ func main() {
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
 
-	log.Printf("InReview listening on http://localhost:%s", cfg.Port)
+	log.Printf("ngmi listening on http://localhost:%s", cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))
 }

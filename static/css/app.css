@@ -1,4 +1,4 @@
-/* InReview — minimal stylesheet */
+/* ngmi — minimal stylesheet */
 
 :root {
   --bg:        #1c1c1e;
@@ -76,6 +76,8 @@ p  { margin: 0 0 0.5rem; }
   transition: transform 0.1s, background 0.1s;
 }
 .hi-reaction-btn:hover { background: var(--bg-subtle); transform: scale(1.2); }
+.hi-reaction-btn[title="gmi"]  { font-size: 0.72rem; color: var(--green); border-color: var(--green); }
+.hi-reaction-btn[title="ngmi"] { font-size: 0.72rem; color: var(--red);   border-color: var(--red); }
 
 .hi-meta         { display: flex; align-items: center; gap: 0.35rem; }
 .hi-avatar-stack { display: flex; align-items: center; }
@@ -405,6 +407,19 @@ p  { margin: 0 0 0.5rem; }
   display: inline-block;
   margin-bottom: 0.25rem;
   color: var(--muted);
+}
+.ngmi-stamp {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--red);
+  border: 1px solid var(--red);
+  padding: 0 5px;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  opacity: 0.85;
 }
 
 .rank-banner { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
