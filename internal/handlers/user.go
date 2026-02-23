@@ -63,23 +63,27 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Queue top repos for sync
+	// Queue top owned repos + repos where they've reviewed PRs for sync.
 	go func() {
-		repos, err := h.gh.GetUserRepos(context.Background(), username, 10)
-		if err != nil {
-			return
+		bg := context.Background()
+		if repos, err := h.gh.GetUserRepos(bg, username, 10); err == nil {
+			for _, repo := range repos {
+				h.db.UpsertRepo(db.Repo{
+					FullName:    repo.FullName,
+					Owner:       repo.Owner.Login,
+					Name:        repo.Name,
+					Description: repo.Description,
+					Stars:       repo.Stars,
+					Language:    repo.Language,
+					SyncStatus:  "pending",
+				})
+				h.worker.Queue(repo.FullName, false)
+			}
 		}
-		for _, repo := range repos {
-			h.db.UpsertRepo(db.Repo{
-				FullName:    repo.FullName,
-				Owner:       repo.Owner.Login,
-				Name:        repo.Name,
-				Description: repo.Description,
-				Stars:       repo.Stars,
-				Language:    repo.Language,
-				SyncStatus:  "pending",
-			})
-			h.worker.Queue(repo.FullName, false)
+		if reviewedRepos, err := h.gh.GetReviewedRepos(bg, username, 100); err == nil {
+			for _, fullName := range reviewedRepos {
+				h.worker.Queue(fullName, false)
+			}
 		}
 	}()
 

@@ -49,7 +49,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		existing, _ := h.db.GetRepo(fullName)
 		if existing == nil {
 			// Verify it exists on GitHub and seed it
-			if ghRepo, err := h.gh.GetRepo(ctx, owner, name); err == nil && !ghRepo.Private {
+			if ghRepo, err := h.gh.GetRepo(ctx, owner, name); err == nil {
 				h.db.UpsertRepo(db.Repo{
 					FullName:    fullName,
 					Owner:       owner,

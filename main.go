@@ -16,31 +16,6 @@ import (
 	"inreview/internal/worker"
 )
 
-// seedRepos are popular repos pre-loaded on first boot to make the global
-// leaderboards immediately interesting.
-var seedRepos = []string{
-	"golang/go",
-	"facebook/react",
-	"microsoft/vscode",
-	"kubernetes/kubernetes",
-	"vercel/next.js",
-	"rust-lang/rust",
-	"vuejs/vue",
-	"angular/angular",
-	"django/django",
-	"rails/rails",
-	"tensorflow/tensorflow",
-	"pytorch/pytorch",
-	"denoland/deno",
-	"astro-build/astro",
-	"sveltejs/svelte",
-	"laravel/laravel",
-	"expressjs/express",
-	"fastapi/fastapi",
-	"tailwindlabs/tailwindcss",
-	"vitejs/vite",
-}
-
 func main() {
 	// Load .env if present (ignored if missing)
 	_ = godotenv.Load()
@@ -63,25 +38,6 @@ func main() {
 	// Sync worker
 	w := worker.New(ghClient, database)
 	w.Start()
-
-	// Seed popular repos on first boot only — skip any already in the DB.
-	go func() {
-		queued := 0
-		for _, repo := range seedRepos {
-			existing, _ := database.GetRepo(repo)
-			if existing != nil {
-				continue
-			}
-			w.Queue(repo, false)
-			queued++
-			if queued > 1 {
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
-		if queued > 0 {
-			log.Printf("seeded %d new repos", queued)
-		}
-	}()
 
 	// HTTP router
 	h := handlers.New(database, ghClient, w, cfg)

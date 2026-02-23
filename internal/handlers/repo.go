@@ -34,7 +34,9 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 				"Could not find "+fullName+" on GitHub. Check the spelling and try again.")
 			return
 		}
-		h.db.UpsertRepo(db.Repo{
+		// UpsertRepo may lose a race with the worker inserting the same repo;
+		// ignore the error and re-read regardless.
+		_ = h.db.UpsertRepo(db.Repo{
 			FullName:    fullName,
 			Owner:       owner,
 			Name:        ghRepo.Name,
@@ -44,6 +46,18 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 			SyncStatus:  "pending",
 		})
 		repo, _ = h.db.GetRepo(fullName)
+		if repo == nil {
+			// Build a minimal in-memory repo so the page still renders.
+			repo = &db.Repo{
+				FullName:    fullName,
+				Owner:       owner,
+				Name:        ghRepo.Name,
+				Description: ghRepo.Description,
+				Stars:       ghRepo.Stars,
+				Language:    ghRepo.Language,
+				SyncStatus:  "pending",
+			}
+		}
 	}
 
 	// Queue sync if needed

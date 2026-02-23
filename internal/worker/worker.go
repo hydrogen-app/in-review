@@ -13,11 +13,10 @@ import (
 )
 
 const (
-	maxPRsPerRepo  = 500
-	syncCooldown   = 6 * time.Hour
-	prFetchDelay   = 80 * time.Millisecond // stay under rate limits
-	workerCount    = 3
-	queueSize      = 200
+	maxPRsPerRepo = 500
+	syncCooldown  = 6 * time.Hour
+	workerCount   = 3
+	queueSize     = 200
 )
 
 // Worker manages background GitHub sync jobs.
@@ -93,58 +92,49 @@ func (w *Worker) syncRepo(fullName string) {
 	log.Printf("[sync] starting %s", fullName)
 	w.db.UpdateSyncStatus(fullName, "syncing")
 
-	// ── Repo metadata ─────────────────────────────────────────────────────────
-	ghRepo, err := w.gh.GetRepo(ctx, owner, name)
+	// Single GraphQL call fetches repo metadata, owner, and all merged PRs with reviews.
+	result, err := w.gh.SyncRepo(ctx, owner, name, maxPRsPerRepo)
 	if err != nil {
-		log.Printf("[sync] error fetching repo %s: %v", fullName, err)
+		log.Printf("[sync] error fetching %s: %v", fullName, err)
 		w.db.UpdateSyncStatus(fullName, "error")
 		return
 	}
 
 	// ── Owner / org metadata ──────────────────────────────────────────────────
+	isOrg := result.Owner.Type == "Organization"
 	orgName := ""
-	ghUser, err := w.gh.GetUser(ctx, owner)
-	if err == nil {
-		isOrg := ghUser.Type == "Organization"
-		if isOrg {
-			orgName = owner
-		}
-		w.db.UpsertUser(db.User{
-			Login:       ghUser.Login,
-			Name:        ghUser.Name,
-			AvatarURL:   ghUser.AvatarURL,
-			Bio:         ghUser.Bio,
-			PublicRepos: ghUser.PublicRepos,
-			Followers:   ghUser.Followers,
-			Company:     ghUser.Company,
-			Location:    ghUser.Location,
-			IsOrg:       isOrg,
-		})
+	if isOrg {
+		orgName = owner
 	}
+	w.db.UpsertUser(db.User{
+		Login:       result.Owner.Login,
+		Name:        result.Owner.Name,
+		AvatarURL:   result.Owner.AvatarURL,
+		Bio:         result.Owner.Bio,
+		PublicRepos: result.Owner.PublicRepos,
+		Followers:   result.Owner.Followers,
+		Company:     result.Owner.Company,
+		Location:    result.Owner.Location,
+		IsOrg:       isOrg,
+	})
 
+	// ── Repo metadata ─────────────────────────────────────────────────────────
 	w.db.UpsertRepo(db.Repo{
 		FullName:    fullName,
 		Owner:       owner,
 		Name:        name,
-		Description: ghRepo.Description,
-		Stars:       ghRepo.Stars,
-		Language:    ghRepo.Language,
+		Description: result.Repo.Description,
+		Stars:       result.Repo.Stars,
+		Language:    result.Repo.Language,
 		OrgName:     orgName,
 		SyncStatus:  "syncing",
 	})
 
-	// ── Pull requests ─────────────────────────────────────────────────────────
-	prs, err := w.gh.GetMergedPRs(ctx, owner, name, maxPRsPerRepo)
-	if err != nil {
-		log.Printf("[sync] error fetching PRs for %s: %v", fullName, err)
-		w.db.UpdateSyncStatus(fullName, "error")
-		return
-	}
-	log.Printf("[sync] %s: %d merged PRs", fullName, len(prs))
+	log.Printf("[sync] %s: %d merged PRs", fullName, len(result.PRs))
 
-	for _, ghPR := range prs {
-		// Cache PR author
-		w.db.UpsertUser(db.User{Login: ghPR.User.Login})
+	// ── Pull requests + reviews ───────────────────────────────────────────────
+	for _, ghPR := range result.PRs {
+		w.db.UpsertUser(db.User{Login: ghPR.Author})
 
 		var mts *int64
 		if ghPR.MergedAt != nil {
@@ -157,38 +147,33 @@ func (w *Worker) syncRepo(fullName string) {
 			RepoFullName:  fullName,
 			Number:        ghPR.Number,
 			Title:         ghPR.Title,
-			AuthorLogin:   ghPR.User.Login,
+			AuthorLogin:   ghPR.Author,
 			Merged:        ghPR.MergedAt != nil,
 			OpenedAt:      ghPR.CreatedAt,
 			MergedAt:      ghPR.MergedAt,
 			MergeTimeSecs: mts,
+			ReviewCount:   len(ghPR.Reviews),
 		}
 
-		// ── Reviews ───────────────────────────────────────────────────────────
-		reviews, err := w.gh.GetPRReviews(ctx, owner, name, ghPR.Number)
-		if err == nil {
-			pr.ReviewCount = len(reviews)
-			for _, rev := range reviews {
-				if rev.State == "CHANGES_REQUESTED" {
-					pr.ChangesRequestedCount++
-				}
-				w.db.UpsertUser(db.User{
-					Login:     rev.User.Login,
-					AvatarURL: rev.User.AvatarURL,
-				})
-				w.db.UpsertReview(db.Review{
-					ID:            fmt.Sprintf("%d", rev.ID),
-					RepoFullName:  fullName,
-					PRNumber:      ghPR.Number,
-					ReviewerLogin: rev.User.Login,
-					State:         rev.State,
-					SubmittedAt:   rev.SubmittedAt,
-				})
+		for _, rev := range ghPR.Reviews {
+			if rev.State == "CHANGES_REQUESTED" {
+				pr.ChangesRequestedCount++
 			}
+			w.db.UpsertUser(db.User{
+				Login:     rev.User.Login,
+				AvatarURL: rev.User.AvatarURL,
+			})
+			w.db.UpsertReview(db.Review{
+				ID:            fmt.Sprintf("%d", rev.ID),
+				RepoFullName:  fullName,
+				PRNumber:      ghPR.Number,
+				ReviewerLogin: rev.User.Login,
+				State:         rev.State,
+				SubmittedAt:   rev.SubmittedAt,
+			})
 		}
 
 		w.db.UpsertPR(pr)
-		time.Sleep(prFetchDelay)
 	}
 
 	w.db.UpdateRepoStats(fullName)
