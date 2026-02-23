@@ -1010,22 +1010,6 @@ func scanVisits(rows *sql.Rows) ([]PageVisit, error) {
 
 // ── Hi wall ───────────────────────────────────────────────────────────────────
 
-func (d *DB) HiCount(path string) int {
-	var count int
-	d.conn.QueryRow(`SELECT count FROM page_hi WHERE path=?`, path).Scan(&count)
-	return count
-}
-
-func (d *DB) HiIncrement(path string) int {
-	d.conn.Exec(`
-		INSERT INTO page_hi (path, count) VALUES (?, 1)
-		ON CONFLICT(path) DO UPDATE SET count = count + 1
-	`, path)
-	var count int
-	d.conn.QueryRow(`SELECT count FROM page_hi WHERE path=?`, path).Scan(&count)
-	return count
-}
-
 // HiWallPage is one entry on the hi wall.
 type HiWallPage struct {
 	Path       string
