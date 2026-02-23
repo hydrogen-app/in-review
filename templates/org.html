@@ -1,0 +1,101 @@
+{{define "title"}}{{.Org.Login}} — InReview{{end}}
+
+{{define "content"}}
+<div class="page-wrap">
+
+  <!-- ── Org Header ── -->
+  <div class="user-header">
+    {{if .Org.AvatarURL}}
+    <img src="{{.Org.AvatarURL}}" class="user-avatar" alt="{{.Org.Login}}" />
+    {{end}}
+    <div class="user-info">
+      <div class="org-type-badge">Organization</div>
+      <h1 class="page-title">{{if .Org.Name}}{{.Org.Name}}{{else}}{{.Org.Login}}{{end}}</h1>
+      <p class="user-login mono">@{{.Org.Login}}</p>
+      {{if .Org.Bio}}<p class="user-bio">{{.Org.Bio}}</p>{{end}}
+      <div class="user-meta">
+        {{if .TotalMergedPRs}}<span class="meta-item">{{formatNumber .TotalMergedPRs}} merged PRs tracked</span>{{end}}
+        {{if .Org.PublicRepos}}<span class="meta-item">{{.Org.PublicRepos}} public repos</span>{{end}}
+      </div>
+    </div>
+    <a href="https://github.com/{{.Org.Login}}" target="_blank" rel="noopener" class="btn btn-outline">GitHub ↗</a>
+  </div>
+
+  <!-- ── In-org leaderboards ── -->
+  <div class="two-col">
+
+    <div class="col-card">
+      <h2 class="col-title">In-Org Review Champions</h2>
+      {{if .ReviewerBoard}}
+      <div class="board-rows">
+        {{range .ReviewerBoard}}
+        <a href="/user/{{.Name}}" class="board-row">
+          <span class="board-rank {{rankClass .Rank}}">{{rankBadge .Rank}}</span>
+          {{if .Extra}}<img src="{{.Extra}}" class="board-avatar" alt="" />{{end}}
+          <span class="board-name mono">@{{.Name}}</span>
+          <span class="board-val">{{formatNumber .Count}} reviews</span>
+        </a>
+        {{end}}
+      </div>
+      {{else}}
+      <p class="col-empty">Still syncing repos…</p>
+      {{end}}
+    </div>
+
+    <div class="col-card">
+      <h2 class="col-title">In-Org Gatekeepers</h2>
+      {{if .GatekeeperBoard}}
+      <div class="board-rows">
+        {{range .GatekeeperBoard}}
+        <a href="/user/{{.Name}}" class="board-row">
+          <span class="board-rank {{rankClass .Rank}}">{{rankBadge .Rank}}</span>
+          {{if .Extra}}<img src="{{.Extra}}" class="board-avatar" alt="" />{{end}}
+          <span class="board-name mono">@{{.Name}}</span>
+          <span class="board-val warn">{{formatNumber .Count}} blocks</span>
+        </a>
+        {{end}}
+      </div>
+      {{else}}
+      <p class="col-empty">Still syncing repos…</p>
+      {{end}}
+    </div>
+
+  </div>
+
+  <!-- ── Org Repos ── -->
+  <section class="section">
+    <h2 class="section-title">Repos</h2>
+    {{if .Repos}}
+    <div class="org-repos">
+      {{range .Repos}}
+      <a href="/repo/{{.FullName}}" class="org-repo-card">
+        <div class="org-repo-top">
+          <span class="org-repo-name mono">{{.Name}}</span>
+          {{if .Language}}<span class="lang-badge sm">{{.Language}}</span>{{end}}
+          {{if .Stars}}<span class="stars-badge sm">{{formatNumber .Stars}} stars</span>{{end}}
+          {{if .SyncStatus}}
+          <span class="sync-badge {{.SyncStatus}} sm">{{.SyncStatus}}</span>
+          {{end}}
+        </div>
+        {{if .Description}}<p class="org-repo-desc">{{.Description}}</p>{{end}}
+        {{if .MergedPRCount}}
+        <div class="org-repo-stats">
+          <span>{{.MergedPRCount}} merged PRs</span>
+          <span>·</span>
+          <span>avg {{formatDuration .AvgMergeTimeSecs}}</span>
+          <span>·</span>
+          <span>fastest {{formatDuration .MinMergeTimeSecs}}</span>
+        </div>
+        {{end}}
+      </a>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty-state">
+      <p>Syncing top repos for {{.Org.Login}}… check back in a moment.</p>
+    </div>
+    {{end}}
+  </section>
+
+</div>
+{{end}}
