@@ -21,6 +21,7 @@ type RepoData struct {
 	IsSyncing     bool
 	OwnerUser     *db.User
 	SizeChartJSON template.JS
+	TimeChartJSON template.JS
 	OGTitle       string
 	OGDesc        string
 	OGUrl         string
@@ -100,6 +101,22 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 		}
 		if raw, err := json.Marshal(payload); err == nil {
 			data.SizeChartJSON = template.JS(raw)
+		}
+	}
+
+	if points, err := h.db.RepoTimeSeriesData(fullName); err == nil && len(points) > 0 {
+		tp := timeChartPayload{}
+		for _, p := range points {
+			tp.Labels = append(tp.Labels, p.Label)
+			tp.PRCounts = append(tp.PRCounts, p.PRCount)
+			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
+			tp.MedianSize = append(tp.MedianSize, roundTo1(p.MedianSize))
+			tp.AvgHours = append(tp.AvgHours, roundTo1(p.AvgSecs/3600))
+			tp.MedianHours = append(tp.MedianHours, roundTo1(p.MedianSecs/3600))
+			tp.ChangesRequestedRate = append(tp.ChangesRequestedRate, roundTo1(p.ChangesRequestedRate))
+		}
+		if raw, err := json.Marshal(tp); err == nil {
+			data.TimeChartJSON = template.JS(raw)
 		}
 	}
 

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"html/template"
 	"net/http"
 	"time"
 
@@ -17,6 +19,7 @@ type OrgData struct {
 	TotalMergedPRs  int
 	TotalReviews    int
 	IsSyncing       bool
+	TimeChartJSON   template.JS
 	OGTitle         string
 	OGDesc          string
 	OGUrl           string
@@ -102,6 +105,23 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	}
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)
+
+	if points, err := h.db.OrgTimeSeriesData(orgName); err == nil && len(points) > 0 {
+		tp := timeChartPayload{}
+		for _, p := range points {
+			tp.Labels = append(tp.Labels, p.Label)
+			tp.PRCounts = append(tp.PRCounts, p.PRCount)
+			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
+			tp.MedianSize = append(tp.MedianSize, roundTo1(p.MedianSize))
+			tp.AvgHours = append(tp.AvgHours, roundTo1(p.AvgSecs/3600))
+			tp.MedianHours = append(tp.MedianHours, roundTo1(p.MedianSecs/3600))
+			tp.ChangesRequestedRate = append(tp.ChangesRequestedRate, roundTo1(p.ChangesRequestedRate))
+		}
+		if raw, err := json.Marshal(tp); err == nil {
+			data.TimeChartJSON = template.JS(raw)
+		}
+	}
+
 	data.OGTitle = orgName + " — ngmi"
 	data.OGUrl = "https://ngmi.review/org/" + orgName
 

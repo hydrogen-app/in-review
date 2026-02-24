@@ -1133,6 +1133,82 @@ func (d *DB) GlobalTimeSeriesData() ([]TimeSeriesPoint, error) {
 	return out, rows.Err()
 }
 
+// RepoTimeSeriesData returns monthly aggregated PR metrics for a single repo.
+func (d *DB) RepoTimeSeriesData(fullName string) ([]TimeSeriesPoint, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			COUNT(*) AS pr_count,
+			COALESCE(AVG(additions + deletions)::FLOAT, 0) AS avg_size,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (additions + deletions)::FLOAT), 0) AS median_size,
+			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS changes_requested_rate
+		FROM pull_requests
+		WHERE repo_full_name=$1 AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
+		GROUP BY DATE_TRUNC('month', merged_at)
+		ORDER BY DATE_TRUNC('month', merged_at)
+	`, fullName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TimeSeriesPoint
+	for rows.Next() {
+		var p TimeSeriesPoint
+		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
+			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// OrgTimeSeriesData returns monthly aggregated PR metrics across all repos
+// belonging to an org (matched by owner or org_name on the repos table).
+func (d *DB) OrgTimeSeriesData(orgName string) ([]TimeSeriesPoint, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			COUNT(*) AS pr_count,
+			COALESCE(AVG(additions + deletions)::FLOAT, 0) AS avg_size,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (additions + deletions)::FLOAT), 0) AS median_size,
+			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS changes_requested_rate
+		FROM pull_requests
+		WHERE repo_full_name IN (SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1)
+		  AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
+		GROUP BY DATE_TRUNC('month', merged_at)
+		ORDER BY DATE_TRUNC('month', merged_at)
+	`, orgName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TimeSeriesPoint
+	for rows.Next() {
+		var p TimeSeriesPoint
+		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
+			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ── Page visits (for "Try:" pills) ────────────────────────────────────────────
 
 type PageVisit struct {
