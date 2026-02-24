@@ -138,7 +138,7 @@ query SyncRepo($owner: String!, $name: String!, $cursor: String) {
     pullRequests(states: [MERGED], first: 50, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        number title createdAt mergedAt
+        number title createdAt mergedAt additions deletions
         author { login }
         reviews(first: 30) {
           nodes { databaseId state submittedAt author { login avatarUrl } }
@@ -252,6 +252,8 @@ func (c *Client) SyncRepo(ctx context.Context, owner, name string, maxPRs int) (
 				Title:     node.Title,
 				CreatedAt: node.CreatedAt,
 				MergedAt:  node.MergedAt,
+				Additions: node.Additions,
+				Deletions: node.Deletions,
 			}
 			if node.Author != nil {
 				pr.Author = node.Author.Login

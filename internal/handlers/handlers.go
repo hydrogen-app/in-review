@@ -240,6 +240,10 @@ func rankBadge(rank int) string {
 	}
 }
 
+func roundTo1(f float64) float64 {
+	return float64(int(f*10+0.5)) / 10
+}
+
 func rankClass(rank int) string {
 	switch rank {
 	case 1:

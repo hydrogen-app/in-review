@@ -47,6 +47,8 @@ type GHPRWithReviews struct {
 	CreatedAt time.Time
 	MergedAt  *time.Time
 	Reviews   []GHReview
+	Additions int
+	Deletions int
 }
 
 // SyncResult is the full output of one GraphQL-based repo sync.
@@ -101,6 +103,8 @@ type gqlPR struct {
 	Title     string     `json:"title"`
 	CreatedAt time.Time  `json:"createdAt"`
 	MergedAt  *time.Time `json:"mergedAt"`
+	Additions int        `json:"additions"`
+	Deletions int        `json:"deletions"`
 	Author    *gqlActor  `json:"author"`
 	Reviews   struct {
 		Nodes []gqlReview `json:"nodes"`

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"html/template"
 	"net/http"
 	"time"
 
@@ -10,12 +12,21 @@ import (
 )
 
 type RepoData struct {
-	Repo         *db.Repo
-	TopReviewers []db.ReviewerStats
-	RecentPRs    []db.PullRequest
-	SpeedRank    int
-	IsSyncing    bool
-	OwnerUser    *db.User
+	Repo          *db.Repo
+	TopReviewers  []db.ReviewerStats
+	RecentPRs     []db.PullRequest
+	SpeedRank     int
+	IsSyncing     bool
+	OwnerUser     *db.User
+	SizeChartJSON template.JS
+}
+
+// sizeChartPayload is marshaled to JSON and embedded directly in the repo page.
+type sizeChartPayload struct {
+	Labels       []string  `json:"labels"`
+	PRCounts     []int     `json:"prCounts"`
+	AvgHours     []float64 `json:"avgHours"`
+	ApprovalRate []float64 `json:"approvalRate"`
 }
 
 func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +83,19 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	data.RecentPRs, _ = h.db.RecentMergedPRs(fullName, 20)
 	data.SpeedRank, _ = h.db.RepoSpeedRank(fullName)
 	data.OwnerUser, _ = h.db.GetUser(owner)
+
+	if buckets, err := h.db.RepoSizeChartData(fullName); err == nil && len(buckets) > 0 {
+		payload := sizeChartPayload{}
+		for _, b := range buckets {
+			payload.Labels = append(payload.Labels, b.Label)
+			payload.PRCounts = append(payload.PRCounts, b.PRCount)
+			payload.AvgHours = append(payload.AvgHours, roundTo1(b.AvgSecs/3600))
+			payload.ApprovalRate = append(payload.ApprovalRate, roundTo1(b.ApprovalRate))
+		}
+		if raw, err := json.Marshal(payload); err == nil {
+			data.SizeChartJSON = template.JS(raw)
+		}
+	}
 
 	h.db.RecordVisit("/repo/"+fullName, "repo", fullName)
 	h.render(w, "repo", data)

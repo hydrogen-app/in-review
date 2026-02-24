@@ -74,6 +74,81 @@
     {{end}}
   </div>
 
+  <!-- ── PR Size Charts ── -->
+  {{if .SizeChartJSON}}
+  <section class="section">
+    <h2 class="section-title">PR Size Analysis</h2>
+    <p class="chart-hint">Lines changed (additions + deletions) vs review outcomes. Re-sync to populate data for older PRs.</p>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-label">PRs by size</div>
+        <div class="chart-wrap"><canvas id="chart-count"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Avg review time (hrs)</div>
+        <div class="chart-wrap"><canvas id="chart-time"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Clean approval rate (%)</div>
+        <div class="chart-wrap"><canvas id="chart-approval"></canvas></div>
+      </div>
+    </div>
+  </section>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script>
+  (function() {
+    var d = {{.SizeChartJSON}};
+    if (!d.labels || !d.labels.length) return;
+
+    var tickColor  = '#848d97';
+    var gridColor  = '#30363d';
+    var baseScales = {
+      x: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor } },
+      y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, beginAtZero: true }
+    };
+
+    new Chart(document.getElementById('chart-count'), {
+      type: 'bar',
+      data: {
+        labels: d.labels,
+        datasets: [{ data: d.prCounts, backgroundColor: '#58a6ff33', borderColor: '#58a6ff', borderWidth: 1 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: baseScales }
+    });
+
+    new Chart(document.getElementById('chart-time'), {
+      type: 'bar',
+      data: {
+        labels: d.labels,
+        datasets: [{ data: d.avgHours, backgroundColor: '#d2992233', borderColor: '#d29922', borderWidth: 1 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: {
+          x: baseScales.x,
+          y: { ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + 'h'; } }, grid: { color: gridColor }, beginAtZero: true }
+        }
+      }
+    });
+
+    new Chart(document.getElementById('chart-approval'), {
+      type: 'bar',
+      data: {
+        labels: d.labels,
+        datasets: [{ data: d.approvalRate, backgroundColor: '#3fb95033', borderColor: '#3fb950', borderWidth: 1 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: {
+          x: baseScales.x,
+          y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } }
+        }
+      }
+    });
+  })();
+  </script>
+  {{end}}
+
   <!-- ── Top Reviewers ── -->
   {{if .TopReviewers}}
   <section class="section">

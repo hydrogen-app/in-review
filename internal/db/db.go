@@ -47,6 +47,8 @@ type PullRequest struct {
 	MergeTimeSecs         *int64
 	ReviewCount           int
 	ChangesRequestedCount int
+	Additions             int
+	Deletions             int
 }
 
 type Review struct {
@@ -202,6 +204,8 @@ func (d *DB) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_hi_log_path ON page_hi_log(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_hi_log_ts   ON page_hi_log(ts)`,
+		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS additions INTEGER DEFAULT 0`,
+		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS deletions INTEGER DEFAULT 0`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -243,18 +247,20 @@ func (d *DB) UpdateSyncStatus(fullName, status string) error {
 func (d *DB) UpsertPR(pr PullRequest) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO pull_requests
-			(id, repo_full_name, number, title, author_login, merged, opened_at, merged_at, merge_time_secs, review_count, changes_requested_count)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			(id, repo_full_name, number, title, author_login, merged, opened_at, merged_at, merge_time_secs, review_count, changes_requested_count, additions, deletions)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT(repo_full_name, number) DO UPDATE SET
 			title                   = EXCLUDED.title,
 			merged                  = EXCLUDED.merged,
 			merged_at               = EXCLUDED.merged_at,
 			merge_time_secs         = EXCLUDED.merge_time_secs,
 			review_count            = EXCLUDED.review_count,
-			changes_requested_count = EXCLUDED.changes_requested_count
+			changes_requested_count = EXCLUDED.changes_requested_count,
+			additions               = EXCLUDED.additions,
+			deletions               = EXCLUDED.deletions
 	`, pr.ID, pr.RepoFullName, pr.Number, pr.Title, pr.AuthorLogin, pr.Merged,
 		pr.OpenedAt.UTC(), pr.MergedAt, pr.MergeTimeSecs,
-		pr.ReviewCount, pr.ChangesRequestedCount)
+		pr.ReviewCount, pr.ChangesRequestedCount, pr.Additions, pr.Deletions)
 	return err
 }
 
@@ -488,7 +494,8 @@ func (d *DB) RepoTopReviewers(fullName string, limit int) ([]ReviewerStats, erro
 func (d *DB) RecentMergedPRs(fullName string, limit int) ([]PullRequest, error) {
 	rows, err := d.conn.Query(`
 		SELECT id, repo_full_name, number, title, author_login, merged,
-		       opened_at, merged_at, merge_time_secs, review_count, changes_requested_count
+		       opened_at, merged_at, merge_time_secs, review_count, changes_requested_count,
+		       additions, deletions
 		FROM pull_requests
 		WHERE repo_full_name=$1 AND merged=TRUE
 		ORDER BY merged_at DESC
@@ -898,6 +905,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		if err := rows.Scan(
 			&pr.ID, &pr.RepoFullName, &pr.Number, &pr.Title, &pr.AuthorLogin, &pr.Merged,
 			&pr.OpenedAt, &mergedAt, &mts, &pr.ReviewCount, &pr.ChangesRequestedCount,
+			&pr.Additions, &pr.Deletions,
 		); err != nil {
 			continue
 		}
@@ -911,6 +919,62 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
+}
+
+// ── PR size chart data ─────────────────────────────────────────────────────────
+
+// PRSizeBucket holds aggregated stats for one size range of pull requests.
+type PRSizeBucket struct {
+	Label        string
+	PRCount      int
+	AvgSecs      float64
+	ApprovalRate float64
+}
+
+// RepoSizeChartData returns PR count, avg review time, and approval rate
+// grouped into five size buckets (by additions+deletions).
+// Only PRs with size data (additions+deletions > 0) are included.
+func (d *DB) RepoSizeChartData(fullName string) ([]PRSizeBucket, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			CASE
+				WHEN (additions + deletions) <= 50   THEN 1
+				WHEN (additions + deletions) <= 200  THEN 2
+				WHEN (additions + deletions) <= 500  THEN 3
+				WHEN (additions + deletions) <= 1000 THEN 4
+				ELSE 5
+			END AS bucket,
+			COUNT(*) AS pr_count,
+			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(SUM(CASE WHEN review_count>0 THEN 1 ELSE 0 END), 0),
+				0
+			) AS approval_rate
+		FROM pull_requests
+		WHERE repo_full_name=$1 AND merged=TRUE AND (additions + deletions) > 0
+		GROUP BY bucket
+		ORDER BY bucket
+	`, fullName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k+"}
+	var out []PRSizeBucket
+	for rows.Next() {
+		var bucketNum int
+		var b PRSizeBucket
+		if err := rows.Scan(&bucketNum, &b.PRCount, &b.AvgSecs, &b.ApprovalRate); err != nil {
+			continue
+		}
+		if bucketNum >= 1 && bucketNum <= 5 {
+			b.Label = labels[bucketNum-1]
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // ── Page visits (for "Try:" pills) ────────────────────────────────────────────

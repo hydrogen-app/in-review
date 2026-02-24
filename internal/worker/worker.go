@@ -151,6 +151,8 @@ func (w *Worker) syncRepo(fullName string) {
 			MergedAt:      ghPR.MergedAt,
 			MergeTimeSecs: mts,
 			ReviewCount:   len(ghPR.Reviews),
+			Additions:     ghPR.Additions,
+			Deletions:     ghPR.Deletions,
 		}
 
 		for _, rev := range ghPR.Reviews {

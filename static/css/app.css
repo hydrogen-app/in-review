@@ -548,6 +548,13 @@ p  { margin: 0 0 0.5rem; }
 .error-detail   { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border); display: inline-block; padding: 0.2rem 0.65rem; margin-bottom: 1rem; }
 .error-actions  { display: flex; gap: 0.65rem; justify-content: center; }
 
+/* ── Charts ────────────────────────────────────────────────────── */
+.chart-hint   { font-size: 0.78rem; color: var(--muted); margin: 0 0 0.75rem; }
+.charts-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem; }
+.chart-card   { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; }
+.chart-label  { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.5rem; }
+.chart-wrap   { position: relative; height: 150px; }
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 640px) {
   body            { padding: 1rem 1rem 3rem; }
@@ -558,4 +565,5 @@ p  { margin: 0 0 0.5rem; }
   .stat-card      { border-right: none; border-bottom: 1px solid var(--border); }
   .user-header    { flex-wrap: wrap; }
   .lb-page-header { flex-direction: column; }
+  .charts-grid    { grid-template-columns: 1fr; }
 }
