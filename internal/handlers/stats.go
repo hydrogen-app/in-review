@@ -17,6 +17,8 @@ type StatsData struct {
 	SizeChartJSON template.JS
 	TimeChartJSON template.JS
 	Trim          int
+	MinStars      int
+	MinContribs   int
 	OGTitle       string
 	OGDesc        string
 	OGUrl         string
@@ -58,9 +60,17 @@ func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	trim, cutoffPct := parseTrim(r)
+	minStars, _ := strconv.Atoi(r.URL.Query().Get("min_stars"))
+	if minStars < 0 {
+		minStars = 0
+	}
+	minContribs, _ := strconv.Atoi(r.URL.Query().Get("min_contribs"))
+	if minContribs < 0 {
+		minContribs = 0
+	}
 
 	// ── Cache check ────────────────────────────────────────────────
-	cacheKey := fmt.Sprintf("stats:v2:%d", trim)
+	cacheKey := fmt.Sprintf("stats:v2:%d:%d:%d", trim, minStars, minContribs)
 	if h.cache != nil {
 		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
 			var data StatsData
@@ -90,15 +100,15 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	pointsCh := make(chan pointsRes, 1)
 
 	go func() {
-		v, err := h.db.GlobalOverallStats()
+		v, err := h.db.GlobalOverallStats(minStars, minContribs)
 		overallCh <- overallRes{v, err}
 	}()
 	go func() {
-		v, err := h.db.GlobalSizeChartData(cutoffPct)
+		v, err := h.db.GlobalSizeChartData(cutoffPct, minStars, minContribs)
 		bucketsCh <- bucketsRes{v, err}
 	}()
 	go func() {
-		v, err := h.db.GlobalTimeSeriesData(cutoffPct)
+		v, err := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
 		pointsCh <- pointsRes{v, err}
 	}()
 
@@ -107,9 +117,11 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	points := <-pointsCh
 
 	data := StatsData{
-		Overall: overall.v,
-		Trim:    trim,
-		OGTitle: "Global PR Stats — ngmi",
+		Overall:     overall.v,
+		Trim:        trim,
+		MinStars:    minStars,
+		MinContribs: minContribs,
+		OGTitle:     "Global PR Stats — ngmi",
 		OGDesc:  "How PR size affects review time and changes requested, across all repos tracked on ngmi.",
 		OGUrl:   "https://ngmi.review/stats",
 	}

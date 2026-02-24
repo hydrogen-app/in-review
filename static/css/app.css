@@ -622,6 +622,7 @@ p  { margin: 0 0 0.5rem; }
 .trim-ctrl         { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); flex: 1; min-width: 180px; }
 .trim-ctrl input   { flex: 1; accent-color: var(--link); }
 .trim-ctrl output  { min-width: 28px; color: var(--fg); }
+.filter-group      { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); }
 
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 640px) {

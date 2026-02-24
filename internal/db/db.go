@@ -1023,7 +1023,8 @@ type GlobalOverallStats struct {
 
 // GlobalSizeChartData returns per-bucket metrics across all repos.
 // cutoffPct trims high-outlier PRs by merge time; pass 1.0 for no trimming.
-func (d *DB) GlobalSizeChartData(cutoffPct float64) ([]GlobalSizeBucket, error) {
+// minStars / minContribs filter by repo stars and distinct PR-author count; pass 0 to skip.
+func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) ([]GlobalSizeBucket, error) {
 	rows, err := d.conn.Query(`
 		WITH cutoff AS (
 			SELECT COALESCE(
@@ -1031,35 +1032,44 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64) ([]GlobalSizeBucket, error) 
 				9999999999.0
 			) AS p
 			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
+		),
+		repo_contribs AS (
+			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
+			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
 		)
 		SELECT
 			CASE
-				WHEN (additions + deletions) <= 50   THEN 1
-				WHEN (additions + deletions) <= 200  THEN 2
-				WHEN (additions + deletions) <= 500  THEN 3
-				WHEN (additions + deletions) <= 1000 THEN 4
+				WHEN (pr.additions + pr.deletions) <= 50   THEN 1
+				WHEN (pr.additions + pr.deletions) <= 200  THEN 2
+				WHEN (pr.additions + pr.deletions) <= 500  THEN 3
+				WHEN (pr.additions + pr.deletions) <= 1000 THEN 4
 				ELSE 5
 			END AS bucket,
 			COUNT(*) AS pr_count,
-			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs,
 			COALESCE(
-				100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END)::FLOAT /
-				NULLIF(SUM(CASE WHEN review_count>0 THEN 1 ELSE 0 END), 0),
+				100.0 * SUM(CASE WHEN pr.changes_requested_count=0 AND pr.review_count>0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(SUM(CASE WHEN pr.review_count>0 THEN 1 ELSE 0 END), 0),
 				0
 			) AS approval_rate,
 			COALESCE(
-				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				100.0 * SUM(CASE WHEN pr.changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate,
-			COALESCE(AVG(changes_requested_count)::FLOAT, 0) AS avg_changes_requested
-		FROM pull_requests, cutoff
-		WHERE merged=TRUE AND (additions + deletions) > 0
-		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
+			COALESCE(AVG(pr.changes_requested_count)::FLOAT, 0) AS avg_changes_requested
+		FROM pull_requests pr
+		JOIN repos r ON r.full_name = pr.repo_full_name
+		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		CROSS JOIN cutoff
+		WHERE pr.merged=TRUE AND (pr.additions + pr.deletions) > 0
+		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= p)
+		  AND ($2 <= 0 OR r.stars >= $2)
+		  AND ($3 <= 0 OR rc.n >= $3)
 		GROUP BY bucket
 		ORDER BY bucket
-	`, cutoffPct)
+	`, cutoffPct, minStars, minContribs)
 	if err != nil {
 		return nil, err
 	}
@@ -1083,18 +1093,28 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64) ([]GlobalSizeBucket, error) 
 }
 
 // GlobalOverallStats returns aggregate review-time stats across all tracked repos.
-func (d *DB) GlobalOverallStats() (GlobalOverallStats, error) {
+// minStars and minContribs filter to repos with at least that many stars / distinct PR authors;
+// pass 0 for either to apply no filter.
+func (d *DB) GlobalOverallStats(minStars, minContribs int) (GlobalOverallStats, error) {
 	var s GlobalOverallStats
 	var avgF, medianF float64
 	err := d.conn.QueryRow(`
+		WITH repo_contribs AS (
+			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
+			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
+		)
 		SELECT
 			COUNT(*) AS total_prs,
-			COUNT(DISTINCT repo_full_name) AS total_repos,
-			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs
-		FROM pull_requests
-		WHERE merged=TRUE AND merge_time_secs > 0
-	`).Scan(&s.TotalPRs, &s.TotalRepos, &avgF, &medianF)
+			COUNT(DISTINCT pr.repo_full_name) AS total_repos,
+			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs
+		FROM pull_requests pr
+		JOIN repos r ON r.full_name = pr.repo_full_name
+		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		WHERE pr.merged=TRUE AND pr.merge_time_secs > 0
+		  AND ($1 <= 0 OR r.stars >= $1)
+		  AND ($2 <= 0 OR rc.n >= $2)
+	`, minStars, minContribs).Scan(&s.TotalPRs, &s.TotalRepos, &avgF, &medianF)
 	s.AvgSecs = int64(avgF)
 	s.MedianSecs = int64(medianF)
 	return s, err
@@ -1116,7 +1136,8 @@ type TimeSeriesPoint struct {
 
 // GlobalTimeSeriesData returns monthly aggregated PR metrics across all repos.
 // cutoffPct trims high-outlier PRs by merge time; pass 1.0 for no trimming.
-func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) {
+// minStars / minContribs filter by repo stars and distinct PR-author count; pass 0 to skip.
+func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
 		WITH cutoff AS (
 			SELECT COALESCE(
@@ -1130,6 +1151,10 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) 
 			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
 			FROM reviews
 			GROUP BY repo_full_name, pr_number
+		),
+		repo_contribs AS (
+			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
+			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
 		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
@@ -1158,11 +1183,15 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) 
 		FROM pull_requests pr
 		CROSS JOIN cutoff
 		LEFT JOIN first_review fr ON fr.repo_full_name = pr.repo_full_name AND fr.pr_number = pr.number
+		JOIN repos r ON r.full_name = pr.repo_full_name
+		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
+		  AND ($2 <= 0 OR r.stars >= $2)
+		  AND ($3 <= 0 OR rc.n >= $3)
 		GROUP BY DATE_TRUNC('month', pr.merged_at)
 		ORDER BY DATE_TRUNC('month', pr.merged_at)
-	`, cutoffPct)
+	`, cutoffPct, minStars, minContribs)
 	if err != nil {
 		return nil, err
 	}

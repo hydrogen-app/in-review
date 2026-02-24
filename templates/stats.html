@@ -61,9 +61,45 @@
         hx-trigger="change"
         hx-target="#charts-area"
         hx-select="#charts-area"
-        hx-push-url="true">
+        hx-push-url="true"
+        hx-include="#min-stars-input,#min-contribs-input">
+    </div>
+    <div class="filter-group">
+      <span>Stars</span>
+      <div class="range-btns">
+        <button type="button" class="range-btn stars-btn{{if eq .MinStars 0}} active{{end}}"     data-val="0"     onclick="ngmiFilter('stars',0)">Any</button>
+        <button type="button" class="range-btn stars-btn{{if eq .MinStars 100}} active{{end}}"   data-val="100"   onclick="ngmiFilter('stars',100)">100+</button>
+        <button type="button" class="range-btn stars-btn{{if eq .MinStars 1000}} active{{end}}"  data-val="1000"  onclick="ngmiFilter('stars',1000)">1k+</button>
+        <button type="button" class="range-btn stars-btn{{if eq .MinStars 10000}} active{{end}}" data-val="10000" onclick="ngmiFilter('stars',10000)">10k+</button>
+      </div>
+      <input type="hidden" id="min-stars-input" name="min_stars" value="{{.MinStars}}"
+        hx-get="/stats" hx-trigger="change" hx-target="#charts-area" hx-select="#charts-area" hx-push-url="true"
+        hx-include="#trim-slider,#min-contribs-input">
+    </div>
+    <div class="filter-group">
+      <span>Contributors</span>
+      <div class="range-btns">
+        <button type="button" class="range-btn contribs-btn{{if eq .MinContribs 0}} active{{end}}"   data-val="0"   onclick="ngmiFilter('contribs',0)">Any</button>
+        <button type="button" class="range-btn contribs-btn{{if eq .MinContribs 5}} active{{end}}"   data-val="5"   onclick="ngmiFilter('contribs',5)">5+</button>
+        <button type="button" class="range-btn contribs-btn{{if eq .MinContribs 20}} active{{end}}"  data-val="20"  onclick="ngmiFilter('contribs',20)">20+</button>
+        <button type="button" class="range-btn contribs-btn{{if eq .MinContribs 100}} active{{end}}" data-val="100" onclick="ngmiFilter('contribs',100)">100+</button>
+      </div>
+      <input type="hidden" id="min-contribs-input" name="min_contribs" value="{{.MinContribs}}"
+        hx-get="/stats" hx-trigger="change" hx-target="#charts-area" hx-select="#charts-area" hx-push-url="true"
+        hx-include="#trim-slider,#min-stars-input">
     </div>
   </div>
+  <script>
+  function ngmiFilter(type, val) {
+    var inputId = type === 'stars' ? 'min-stars-input' : 'min-contribs-input';
+    var btnClass = type === 'stars' ? 'stars-btn' : 'contribs-btn';
+    document.getElementById(inputId).value = val;
+    document.querySelectorAll('.' + btnClass).forEach(function(b) {
+      b.classList.toggle('active', parseInt(b.dataset.val) === val);
+    });
+    htmx.trigger(document.getElementById(inputId), 'change');
+  }
+  </script>
   <div id="charts-area">
   {{end}}
 
