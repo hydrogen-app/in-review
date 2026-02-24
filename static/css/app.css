@@ -601,6 +601,18 @@ p  { margin: 0 0 0.5rem; }
 .chart-label  { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.5rem; }
 .chart-wrap   { position: relative; height: 280px; }
 
+/* Full-width chart row (stats page) */
+.chart-row         { display: grid; grid-template-columns: 1fr 190px; gap: 0.85rem; align-items: start; margin-bottom: 0.85rem; }
+.chart-aside       { display: flex; flex-direction: column; gap: 0.5rem; }
+.chart-stat        { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.75rem; }
+.chart-stat-num    { font-size: 1.05rem; font-weight: 700; color: var(--fg); display: block; }
+.chart-stat-label  { font-size: 0.72rem; color: var(--muted); display: block; margin-top: 2px; }
+.chart-stat-trend  { font-size: 0.78rem; margin-top: 0.25rem; display: block; }
+.bucket-tbl        { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.bucket-tbl td     { padding: 0.2rem 0.25rem; color: var(--muted); }
+.bucket-tbl td:first-child { color: var(--fg); }
+.bucket-tbl td:last-child  { text-align: right; font-weight: 600; color: var(--fg); }
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 640px) {
   body            { padding: 1rem 1rem 3rem; }
@@ -613,4 +625,5 @@ p  { margin: 0 0 0.5rem; }
   .lb-page-header { flex-direction: column; }
   .charts-grid,
   .charts-grid-2  { grid-template-columns: 1fr; }
+  .chart-row      { grid-template-columns: 1fr; }
 }

@@ -46,25 +46,38 @@
   {{if .TimeChartJSON}}
   <section class="section">
     <h2 class="section-title">Trends Over Time</h2>
-    <p class="chart-hint">Monthly aggregates across all tracked repos. The gap between average and median reveals how skewed the distribution is — a widening gap means more extreme outliers.</p>
+    <p class="chart-hint">Monthly aggregates across all tracked repos. The gap between avg and median shows how much outliers skew the data — a widening gap means more extreme PRs.</p>
 
-    <div class="charts-grid charts-grid-2">
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">PR size over time (lines changed)</div>
         <div class="chart-wrap"><canvas id="tc-size"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-size-aside"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Review time over time (hrs)</div>
         <div class="chart-wrap"><canvas id="tc-time"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-time-aside"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Changes requested rate over time (%)</div>
         <div class="chart-wrap"><canvas id="tc-crrate"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-crrate-aside"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Merged PRs per month</div>
         <div class="chart-wrap"><canvas id="tc-count"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-count-aside"></div>
     </div>
   </section>
   <script>
@@ -72,72 +85,109 @@
     var t = {{.TimeChartJSON}};
     if (!t.labels || !t.labels.length) return;
 
-    var tickColor = '#848d97';
-    var gridColor = '#30363d';
+    var tickColor = '#848d97', gridColor = '#30363d';
     var baseX = { ticks: { color: tickColor, font: { size: 11 }, maxRotation: 45 }, grid: { color: gridColor } };
     var baseY = function(cb) {
       return { ticks: { color: tickColor, font: { size: 11 }, callback: cb || null }, grid: { color: gridColor }, beginAtZero: true };
     };
     var lineOpts = {
-      responsive: true,
-      maintainAspectRatio: false,
+      responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: true, labels: { color: tickColor, font: { size: 11 }, boxWidth: 12 } } },
       elements: { line: { tension: 0.3 }, point: { radius: 2, hoverRadius: 4 } }
     };
+    var noLegend = Object.assign({}, lineOpts, {
+      plugins: Object.assign({}, lineOpts.plugins, { legend: { display: false } })
+    });
 
     new Chart(document.getElementById('tc-size'), {
       type: 'line',
-      data: {
-        labels: t.labels,
-        datasets: [
-          { label: 'Avg', data: t.avgSize, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
-          { label: 'Median', data: t.medianSize, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
-        ]
-      },
+      data: { labels: t.labels, datasets: [
+        { label: 'Avg',    data: t.avgSize,    borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
+        { label: 'Median', data: t.medianSize, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
+      ]},
       options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY() } })
     });
-
     new Chart(document.getElementById('tc-time'), {
       type: 'line',
-      data: {
-        labels: t.labels,
-        datasets: [
-          { label: 'Avg', data: t.avgHours, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
-          { label: 'Median', data: t.medianHours, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
-        ]
-      },
-      options: Object.assign({}, lineOpts, {
-        scales: { x: baseX, y: baseY(function(v) { return v + 'h'; }) }
-      })
+      data: { labels: t.labels, datasets: [
+        { label: 'Avg',    data: t.avgHours,    borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
+        { label: 'Median', data: t.medianHours, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
+      ]},
+      options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY(function(v) { return v + 'h'; }) } })
     });
-
     new Chart(document.getElementById('tc-crrate'), {
       type: 'line',
-      data: {
-        labels: t.labels,
-        datasets: [
-          { label: 'Changes requested rate', data: t.changesRequestedRate, borderColor: '#f85149', backgroundColor: '#f8514915', borderWidth: 2, fill: true }
-        ]
-      },
-      options: Object.assign({}, lineOpts, {
-        plugins: Object.assign({}, lineOpts.plugins, { legend: Object.assign({}, lineOpts.plugins.legend, { display: false }) }),
-        scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } }
-      })
+      data: { labels: t.labels, datasets: [
+        { label: 'Changes requested %', data: t.changesRequestedRate, borderColor: '#f85149', backgroundColor: '#f8514915', borderWidth: 2, fill: true }
+      ]},
+      options: Object.assign({}, noLegend, { scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } } })
     });
-
     new Chart(document.getElementById('tc-count'), {
       type: 'line',
-      data: {
-        labels: t.labels,
-        datasets: [
-          { label: 'PRs merged', data: t.prCounts, borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true }
-        ]
-      },
-      options: Object.assign({}, lineOpts, {
-        plugins: Object.assign({}, lineOpts.plugins, { legend: Object.assign({}, lineOpts.plugins.legend, { display: false }) }),
-        scales: { x: baseX, y: baseY() }
-      })
+      data: { labels: t.labels, datasets: [
+        { label: 'PRs merged', data: t.prCounts, borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true }
+      ]},
+      options: Object.assign({}, noLegend, { scales: { x: baseX, y: baseY() } })
     });
+
+    // ── Populate stat sidebars via DOM ──────────────────────────────
+    var n = t.labels.length;
+
+    function statCard(numText, labelText, trendText, trendColor) {
+      var div = document.createElement('div');
+      div.className = 'chart-stat';
+      var num = document.createElement('span');
+      num.className = 'chart-stat-num';
+      num.textContent = numText;
+      var lbl = document.createElement('span');
+      lbl.className = 'chart-stat-label';
+      lbl.textContent = labelText;
+      div.appendChild(num);
+      div.appendChild(lbl);
+      if (trendText) {
+        var tr = document.createElement('span');
+        tr.className = 'chart-stat-trend';
+        tr.style.color = trendColor;
+        tr.textContent = trendText;
+        div.appendChild(tr);
+      }
+      return div;
+    }
+
+    function trendCard(firstVal, lastVal, firstName) {
+      if (!firstVal || firstVal === 0) return null;
+      var pct = Math.round((lastVal - firstVal) / firstVal * 100);
+      var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '→');
+      var color = pct > 0 ? '#f85149' : (pct < 0 ? '#3fb950' : '#848d97');
+      return statCard(arrow + ' ' + Math.abs(pct) + '%', 'since ' + firstName, null, null);
+    }
+
+    function populateAside(id, cards) {
+      var aside = document.getElementById(id);
+      cards.forEach(function(c) { if (c) aside.appendChild(c); });
+    }
+
+    var first = t.labels[0], latest = t.labels[n - 1];
+
+    populateAside('tc-size-aside', [
+      statCard(Math.round(t.avgSize[n-1]) + ' lines',    'Avg size, ' + latest),
+      statCard(Math.round(t.medianSize[n-1]) + ' lines', 'Median size, ' + latest),
+      trendCard(t.avgSize[0], t.avgSize[n-1], first)
+    ]);
+    populateAside('tc-time-aside', [
+      statCard(t.avgHours[n-1] + 'h',    'Avg review time, ' + latest),
+      statCard(t.medianHours[n-1] + 'h', 'Median review time, ' + latest),
+      trendCard(t.avgHours[0], t.avgHours[n-1], first)
+    ]);
+    populateAside('tc-crrate-aside', [
+      statCard(t.changesRequestedRate[n-1] + '%', 'Rate, ' + latest),
+      statCard(t.changesRequestedRate[0] + '%',   'Rate, ' + first),
+      trendCard(t.changesRequestedRate[0], t.changesRequestedRate[n-1], first)
+    ]);
+    populateAside('tc-count-aside', [
+      statCard(t.prCounts[n-1] + ' PRs', 'Merged, ' + latest),
+      statCard(Math.max.apply(null, t.prCounts) + ' PRs', 'Peak month')
+    ]);
   })();
   </script>
   {{end}}
@@ -146,39 +196,59 @@
   {{if .SizeChartJSON}}
   <section class="section">
     <h2 class="section-title">PR Size vs Review Time</h2>
-    <p class="chart-hint">Lines changed (additions + deletions) grouped into size buckets. Median is more robust to outliers than average.</p>
-    <div class="charts-grid">
+    <p class="chart-hint">Lines changed (additions + deletions) grouped into size buckets.</p>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">Avg review time (hrs)</div>
+        <div class="chart-label">Avg review time by size (hrs)</div>
         <div class="chart-wrap"><canvas id="chart-avg-time"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-avg-time"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">Median review time (hrs)</div>
+        <div class="chart-label">Median review time by size (hrs)</div>
         <div class="chart-wrap"><canvas id="chart-median-time"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-median-time"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">PRs by size</div>
+        <div class="chart-label">PRs by size bucket</div>
         <div class="chart-wrap"><canvas id="chart-count"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-count"></div>
     </div>
   </section>
 
   <section class="section">
     <h2 class="section-title">PR Size vs Changes Requested</h2>
-    <p class="chart-hint">How often reviewers push back based on PR size. "Changes requested rate" is the share of PRs that received at least one blocking review.</p>
-    <div class="charts-grid">
+    <p class="chart-hint">"Changes requested rate" is the share of PRs that received at least one blocking review.</p>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">Changes requested rate (%)</div>
+        <div class="chart-label">Changes requested rate by size (%)</div>
         <div class="chart-wrap"><canvas id="chart-cr-rate"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-cr-rate"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">Avg changes requested (per PR)</div>
+        <div class="chart-label">Avg changes requested per PR by size</div>
         <div class="chart-wrap"><canvas id="chart-cr-avg"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-cr-avg"></div>
+    </div>
+
+    <div class="chart-row">
       <div class="chart-card">
-        <div class="chart-label">Clean approval rate (%)</div>
+        <div class="chart-label">Clean approval rate by size (%)</div>
         <div class="chart-wrap"><canvas id="chart-approval"></canvas></div>
       </div>
+      <div class="chart-aside" id="aside-approval"></div>
     </div>
   </section>
 
@@ -187,64 +257,45 @@
     var d = {{.SizeChartJSON}};
     if (!d.labels || !d.labels.length) return;
 
-    var tickColor = '#848d97';
-    var gridColor = '#30363d';
+    var tickColor = '#848d97', gridColor = '#30363d';
     var baseScales = {
       x: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor } },
       y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, beginAtZero: true }
     };
-    var hourScales = {
-      x: baseScales.x,
-      y: {
-        ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + 'h'; } },
-        grid: { color: gridColor }, beginAtZero: true
-      }
-    };
-    var pctScales = {
-      x: baseScales.x,
-      y: {
-        min: 0, max: 100,
-        ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } },
-        grid: { color: gridColor }
-      }
-    };
+    var hourScales = { x: baseScales.x, y: { ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + 'h'; } }, grid: { color: gridColor }, beginAtZero: true } };
+    var pctScales  = { x: baseScales.x, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } };
     var opts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
 
-    new Chart(document.getElementById('chart-avg-time'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.avgHours, backgroundColor: '#d2992233', borderColor: '#d29922', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: hourScales })
-    });
+    new Chart(document.getElementById('chart-avg-time'),    { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.avgHours,            backgroundColor: '#d2992233', borderColor: '#d29922', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: hourScales }) });
+    new Chart(document.getElementById('chart-median-time'), { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.medianHours,         backgroundColor: '#f0883e33', borderColor: '#f0883e', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: hourScales }) });
+    new Chart(document.getElementById('chart-count'),       { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.prCounts,            backgroundColor: '#58a6ff33', borderColor: '#58a6ff', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: baseScales }) });
+    new Chart(document.getElementById('chart-cr-rate'),     { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.changesRequestedRate,backgroundColor: '#f8514933', borderColor: '#f85149', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: pctScales }) });
+    new Chart(document.getElementById('chart-cr-avg'),      { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.avgChangesRequested, backgroundColor: '#da3633aa', borderColor: '#da3633', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: baseScales }) });
+    new Chart(document.getElementById('chart-approval'),    { type: 'bar', data: { labels: d.labels, datasets: [{ data: d.approvalRate,        backgroundColor: '#3fb95033', borderColor: '#3fb950', borderWidth: 1 }] }, options: Object.assign({}, opts, { scales: pctScales }) });
 
-    new Chart(document.getElementById('chart-median-time'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.medianHours, backgroundColor: '#f0883e33', borderColor: '#f0883e', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: hourScales })
-    });
+    // ── Populate bucket sidebars via DOM ────────────────────────────
+    function bucketTable(vals, suffix) {
+      var table = document.createElement('table');
+      table.className = 'bucket-tbl';
+      for (var i = 0; i < d.labels.length; i++) {
+        var tr = document.createElement('tr');
+        var td1 = document.createElement('td');
+        td1.textContent = d.labels[i];
+        var td2 = document.createElement('td');
+        td2.textContent = vals[i] + (suffix || '');
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        table.appendChild(tr);
+      }
+      return table;
+    }
 
-    new Chart(document.getElementById('chart-count'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.prCounts, backgroundColor: '#58a6ff33', borderColor: '#58a6ff', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: baseScales })
-    });
-
-    new Chart(document.getElementById('chart-cr-rate'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.changesRequestedRate, backgroundColor: '#f8514933', borderColor: '#f85149', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: pctScales })
-    });
-
-    new Chart(document.getElementById('chart-cr-avg'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.avgChangesRequested, backgroundColor: '#da3633aa', borderColor: '#da3633', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: baseScales })
-    });
-
-    new Chart(document.getElementById('chart-approval'), {
-      type: 'bar',
-      data: { labels: d.labels, datasets: [{ data: d.approvalRate, backgroundColor: '#3fb95033', borderColor: '#3fb950', borderWidth: 1 }] },
-      options: Object.assign({}, opts, { scales: pctScales })
-    });
+    document.getElementById('aside-avg-time').appendChild(bucketTable(d.avgHours, 'h'));
+    document.getElementById('aside-median-time').appendChild(bucketTable(d.medianHours, 'h'));
+    document.getElementById('aside-count').appendChild(bucketTable(d.prCounts, ' PRs'));
+    document.getElementById('aside-cr-rate').appendChild(bucketTable(d.changesRequestedRate, '%'));
+    document.getElementById('aside-cr-avg').appendChild(bucketTable(d.avgChangesRequested, '×'));
+    document.getElementById('aside-approval').appendChild(bucketTable(d.approvalRate, '%'));
   })();
   </script>
   {{else}}
