@@ -24,17 +24,31 @@ func jsonDecode(r *http.Request, v interface{}) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
-// AuthGitHub initiates the GitHub App installation + OAuth flow.
-// We redirect to the App's installation URL instead of the bare OAuth endpoint
-// because GitHub will bundle an OAuth code alongside the installation_id in the
-// callback when "Request user authorization (OAuth) during installation" is
-// enabled on the App.
-func (h *Handler) AuthGitHub(w http.ResponseWriter, r *http.Request) {
-	// If the user already has a valid session, skip the OAuth flow entirely.
+// AuthLogin initiates a standard GitHub OAuth login (no app installation).
+// Used by the "Login" nav button. After the OAuth code exchange the user
+// lands on the dashboard; they can install the GitHub App from there if needed.
+func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	if currentUser(r) != "" {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}
+	if h.cfg.GitHubOAuthClientID == "" {
+		h.renderErrorReq(w, r, http.StatusServiceUnavailable,
+			"Auth Unavailable", "GitHub OAuth is not configured.")
+		return
+	}
+	state := auth.GenerateOAuthState(r.Context(), h.cache)
+	redirectURI := h.cfg.BaseURL + "/auth/github/callback"
+	oauthURL := fmt.Sprintf(
+		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&state=%s&scope=read:user",
+		h.cfg.GitHubOAuthClientID, redirectURI, state,
+	)
+	http.Redirect(w, r, oauthURL, http.StatusFound)
+}
+
+// AuthGitHub initiates the GitHub App installation + OAuth flow.
+// Used by the "Install GitHub App" button on the dashboard (after login).
+func (h *Handler) AuthGitHub(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.GitHubAppSlug == "" {
 		h.renderErrorReq(w, r, http.StatusServiceUnavailable,
 			"Auth Unavailable", "GitHub App is not configured (GITHUB_APP_SLUG missing).")

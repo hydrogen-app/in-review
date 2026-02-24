@@ -79,6 +79,7 @@ func main() {
 	r.Post("/api/hi", h.HiPost)
 
 	// Auth routes
+	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/github", h.AuthGitHub)
 	r.Get("/auth/github/callback", h.AuthGitHubCallback)
 	r.Post("/auth/logout", h.AuthLogout)
