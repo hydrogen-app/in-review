@@ -59,6 +59,7 @@ func main() {
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	r.Get("/", h.Home)
+	r.Get("/stats", h.Stats)
 	r.Get("/search", h.Search)
 	r.Get("/repo/{owner}/{name}", h.Repo)
 	r.Get("/user/{username}", h.User)

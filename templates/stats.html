@@ -1,0 +1,154 @@
+{{define "title"}}Global PR Stats — ngmi{{end}}
+
+{{define "content"}}
+<div class="page-wrap">
+
+  <!-- ── Breadcrumb ── -->
+  <div class="breadcrumb">
+    <a href="/" class="bc-link">ngmi</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">stats</span>
+  </div>
+
+  <!-- ── Page Header ── -->
+  <div class="repo-header">
+    <div class="repo-title-row">
+      <h1 class="page-title mono">Global PR Stats</h1>
+    </div>
+    <p class="repo-desc">Aggregate review data across all tracked repos. How PR size affects review time and how often reviewers request changes.</p>
+  </div>
+
+  <!-- ── Summary Cards ── -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <span class="stat-card-num">{{formatNumber .Overall.TotalPRs}}</span>
+      <span class="stat-card-label">Merged PRs</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-card-num">{{formatNumber .Overall.TotalRepos}}</span>
+      <span class="stat-card-label">Repos Tracked</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-card-num">{{formatDuration .Overall.AvgSecs}}</span>
+      <span class="stat-card-label">Avg Review Time</span>
+    </div>
+    <div class="stat-card highlight">
+      <span class="stat-card-num">{{formatDuration .Overall.MedianSecs}}</span>
+      <span class="stat-card-label">Median Review Time</span>
+    </div>
+  </div>
+
+  <!-- ── PR Size Charts ── -->
+  {{if .SizeChartJSON}}
+  <section class="section">
+    <h2 class="section-title">PR Size vs Review Time</h2>
+    <p class="chart-hint">Lines changed (additions + deletions) grouped into size buckets. Median is more robust to outliers than average.</p>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-label">Avg review time (hrs)</div>
+        <div class="chart-wrap"><canvas id="chart-avg-time"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Median review time (hrs)</div>
+        <div class="chart-wrap"><canvas id="chart-median-time"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">PRs by size</div>
+        <div class="chart-wrap"><canvas id="chart-count"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title">PR Size vs Changes Requested</h2>
+    <p class="chart-hint">How often reviewers push back based on PR size. "Changes requested rate" is the share of PRs that received at least one blocking review.</p>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-label">Changes requested rate (%)</div>
+        <div class="chart-wrap"><canvas id="chart-cr-rate"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Avg changes requested (per PR)</div>
+        <div class="chart-wrap"><canvas id="chart-cr-avg"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Clean approval rate (%)</div>
+        <div class="chart-wrap"><canvas id="chart-approval"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script>
+  (function() {
+    var d = {{.SizeChartJSON}};
+    if (!d.labels || !d.labels.length) return;
+
+    var tickColor = '#848d97';
+    var gridColor = '#30363d';
+    var baseScales = {
+      x: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor } },
+      y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, beginAtZero: true }
+    };
+    var hourScales = {
+      x: baseScales.x,
+      y: {
+        ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + 'h'; } },
+        grid: { color: gridColor }, beginAtZero: true
+      }
+    };
+    var pctScales = {
+      x: baseScales.x,
+      y: {
+        min: 0, max: 100,
+        ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } },
+        grid: { color: gridColor }
+      }
+    };
+    var opts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
+
+    new Chart(document.getElementById('chart-avg-time'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.avgHours, backgroundColor: '#d2992233', borderColor: '#d29922', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: hourScales })
+    });
+
+    new Chart(document.getElementById('chart-median-time'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.medianHours, backgroundColor: '#f0883e33', borderColor: '#f0883e', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: hourScales })
+    });
+
+    new Chart(document.getElementById('chart-count'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.prCounts, backgroundColor: '#58a6ff33', borderColor: '#58a6ff', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: baseScales })
+    });
+
+    new Chart(document.getElementById('chart-cr-rate'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.changesRequestedRate, backgroundColor: '#f8514933', borderColor: '#f85149', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: pctScales })
+    });
+
+    new Chart(document.getElementById('chart-cr-avg'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.avgChangesRequested, backgroundColor: '#da3633aa', borderColor: '#da3633', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: baseScales })
+    });
+
+    new Chart(document.getElementById('chart-approval'), {
+      type: 'bar',
+      data: { labels: d.labels, datasets: [{ data: d.approvalRate, backgroundColor: '#3fb95033', borderColor: '#3fb950', borderWidth: 1 }] },
+      options: Object.assign({}, opts, { scales: pctScales })
+    });
+  })();
+  </script>
+  {{else}}
+  <div class="empty-state">
+    <p>No data yet. Repos need to be synced before stats appear. Add a repo at <a href="/">the homepage</a>.</p>
+  </div>
+  {{end}}
+
+</div>
+{{end}}

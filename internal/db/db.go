@@ -991,6 +991,98 @@ func (d *DB) RepoSizeChartData(fullName string) ([]PRSizeBucket, error) {
 	return out, rows.Err()
 }
 
+// ── Global stats (cross-repo aggregations) ────────────────────────────────────
+
+// GlobalSizeBucket holds aggregated stats for one size range across all repos.
+type GlobalSizeBucket struct {
+	Label                string
+	PRCount              int
+	AvgSecs              float64
+	MedianSecs           float64
+	ApprovalRate         float64
+	ChangesRequestedRate float64
+	AvgChangesRequested  float64
+}
+
+// GlobalOverallStats holds high-level aggregate stats across all tracked repos.
+type GlobalOverallStats struct {
+	TotalPRs   int
+	TotalRepos int
+	AvgSecs    int64
+	MedianSecs int64
+}
+
+// GlobalSizeChartData returns per-bucket metrics (avg/median review time,
+// approval rate, changes-requested rate) across all repos.
+func (d *DB) GlobalSizeChartData() ([]GlobalSizeBucket, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			CASE
+				WHEN (additions + deletions) <= 50   THEN 1
+				WHEN (additions + deletions) <= 200  THEN 2
+				WHEN (additions + deletions) <= 500  THEN 3
+				WHEN (additions + deletions) <= 1000 THEN 4
+				ELSE 5
+			END AS bucket,
+			COUNT(*) AS pr_count,
+			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(SUM(CASE WHEN review_count>0 THEN 1 ELSE 0 END), 0),
+				0
+			) AS approval_rate,
+			COALESCE(
+				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS changes_requested_rate,
+			COALESCE(AVG(changes_requested_count)::FLOAT, 0) AS avg_changes_requested
+		FROM pull_requests
+		WHERE merged=TRUE AND (additions + deletions) > 0
+		GROUP BY bucket
+		ORDER BY bucket
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k+"}
+	var out []GlobalSizeBucket
+	for rows.Next() {
+		var bucketNum int
+		var b GlobalSizeBucket
+		if err := rows.Scan(&bucketNum, &b.PRCount, &b.AvgSecs, &b.MedianSecs,
+			&b.ApprovalRate, &b.ChangesRequestedRate, &b.AvgChangesRequested); err != nil {
+			continue
+		}
+		if bucketNum >= 1 && bucketNum <= 5 {
+			b.Label = labels[bucketNum-1]
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// GlobalOverallStats returns aggregate review-time stats across all tracked repos.
+func (d *DB) GlobalOverallStats() (GlobalOverallStats, error) {
+	var s GlobalOverallStats
+	var avgF, medianF float64
+	err := d.conn.QueryRow(`
+		SELECT
+			COUNT(*) AS total_prs,
+			COUNT(DISTINCT repo_full_name) AS total_repos,
+			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs
+		FROM pull_requests
+		WHERE merged=TRUE AND merge_time_secs > 0
+	`).Scan(&s.TotalPRs, &s.TotalRepos, &avgF, &medianF)
+	s.AvgSecs = int64(avgF)
+	s.MedianSecs = int64(medianF)
+	return s, err
+}
+
 // ── Page visits (for "Try:" pills) ────────────────────────────────────────────
 
 type PageVisit struct {
