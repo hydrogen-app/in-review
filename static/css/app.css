@@ -596,6 +596,7 @@ p  { margin: 0 0 0.5rem; }
 /* ── Charts ────────────────────────────────────────────────────── */
 .chart-hint   { font-size: 0.78rem; color: var(--muted); margin: 0 0 0.75rem; }
 .charts-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem; }
+.charts-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .chart-card   { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; }
 .chart-label  { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.5rem; }
 .chart-wrap   { position: relative; height: 150px; }
@@ -610,5 +611,6 @@ p  { margin: 0 0 0.5rem; }
   .stat-card      { border-right: none; border-bottom: 1px solid var(--border); }
   .user-header    { flex-wrap: wrap; }
   .lb-page-header { flex-direction: column; }
-  .charts-grid    { grid-template-columns: 1fr; }
+  .charts-grid,
+  .charts-grid-2  { grid-template-columns: 1fr; }
 }

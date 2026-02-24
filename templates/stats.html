@@ -38,6 +38,110 @@
     </div>
   </div>
 
+  {{if or .TimeChartJSON .SizeChartJSON}}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  {{end}}
+
+  <!-- ── Time-Series Charts ── -->
+  {{if .TimeChartJSON}}
+  <section class="section">
+    <h2 class="section-title">Trends Over Time</h2>
+    <p class="chart-hint">Monthly aggregates across all tracked repos. The gap between average and median reveals how skewed the distribution is — a widening gap means more extreme outliers.</p>
+
+    <div class="charts-grid charts-grid-2">
+      <div class="chart-card">
+        <div class="chart-label">PR size over time (lines changed)</div>
+        <div class="chart-wrap"><canvas id="tc-size"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Review time over time (hrs)</div>
+        <div class="chart-wrap"><canvas id="tc-time"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Changes requested rate over time (%)</div>
+        <div class="chart-wrap"><canvas id="tc-crrate"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-label">Merged PRs per month</div>
+        <div class="chart-wrap"><canvas id="tc-count"></canvas></div>
+      </div>
+    </div>
+  </section>
+  <script>
+  (function() {
+    var t = {{.TimeChartJSON}};
+    if (!t.labels || !t.labels.length) return;
+
+    var tickColor = '#848d97';
+    var gridColor = '#30363d';
+    var baseX = { ticks: { color: tickColor, font: { size: 11 }, maxRotation: 45 }, grid: { color: gridColor } };
+    var baseY = function(cb) {
+      return { ticks: { color: tickColor, font: { size: 11 }, callback: cb || null }, grid: { color: gridColor }, beginAtZero: true };
+    };
+    var lineOpts = {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { color: tickColor, font: { size: 11 }, boxWidth: 12 } } },
+      elements: { line: { tension: 0.3 }, point: { radius: 2, hoverRadius: 4 } }
+    };
+
+    new Chart(document.getElementById('tc-size'), {
+      type: 'line',
+      data: {
+        labels: t.labels,
+        datasets: [
+          { label: 'Avg', data: t.avgSize, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
+          { label: 'Median', data: t.medianSize, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
+        ]
+      },
+      options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY() } })
+    });
+
+    new Chart(document.getElementById('tc-time'), {
+      type: 'line',
+      data: {
+        labels: t.labels,
+        datasets: [
+          { label: 'Avg', data: t.avgHours, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
+          { label: 'Median', data: t.medianHours, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
+        ]
+      },
+      options: Object.assign({}, lineOpts, {
+        scales: { x: baseX, y: baseY(function(v) { return v + 'h'; }) }
+      })
+    });
+
+    new Chart(document.getElementById('tc-crrate'), {
+      type: 'line',
+      data: {
+        labels: t.labels,
+        datasets: [
+          { label: 'Changes requested rate', data: t.changesRequestedRate, borderColor: '#f85149', backgroundColor: '#f8514915', borderWidth: 2, fill: true }
+        ]
+      },
+      options: Object.assign({}, lineOpts, {
+        plugins: Object.assign({}, lineOpts.plugins, { legend: Object.assign({}, lineOpts.plugins.legend, { display: false }) }),
+        scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } }
+      })
+    });
+
+    new Chart(document.getElementById('tc-count'), {
+      type: 'line',
+      data: {
+        labels: t.labels,
+        datasets: [
+          { label: 'PRs merged', data: t.prCounts, borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true }
+        ]
+      },
+      options: Object.assign({}, lineOpts, {
+        plugins: Object.assign({}, lineOpts.plugins, { legend: Object.assign({}, lineOpts.plugins.legend, { display: false }) }),
+        scales: { x: baseX, y: baseY() }
+      })
+    });
+  })();
+  </script>
+  {{end}}
+
   <!-- ── PR Size Charts ── -->
   {{if .SizeChartJSON}}
   <section class="section">
@@ -78,7 +182,6 @@
     </div>
   </section>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script>
   (function() {
     var d = {{.SizeChartJSON}};

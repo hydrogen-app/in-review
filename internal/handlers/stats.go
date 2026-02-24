@@ -12,6 +12,7 @@ import (
 type StatsData struct {
 	Overall       db.GlobalOverallStats
 	SizeChartJSON template.JS
+	TimeChartJSON template.JS
 	OGTitle       string
 	OGDesc        string
 	OGUrl         string
@@ -28,9 +29,21 @@ type statsChartPayload struct {
 	AvgChangesRequested  []float64 `json:"avgChangesRequested"`
 }
 
+// timeChartPayload holds monthly time-series data for line charts.
+type timeChartPayload struct {
+	Labels               []string  `json:"labels"`
+	PRCounts             []int     `json:"prCounts"`
+	AvgSize              []float64 `json:"avgSize"`
+	MedianSize           []float64 `json:"medianSize"`
+	AvgHours             []float64 `json:"avgHours"`
+	MedianHours          []float64 `json:"medianHours"`
+	ChangesRequestedRate []float64 `json:"changesRequestedRate"`
+}
+
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	overall, _ := h.db.GlobalOverallStats()
 	buckets, _ := h.db.GlobalSizeChartData()
+	points, _ := h.db.GlobalTimeSeriesData()
 
 	data := StatsData{
 		Overall: overall,
@@ -52,6 +65,22 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		}
 		if raw, err := json.Marshal(payload); err == nil {
 			data.SizeChartJSON = template.JS(raw)
+		}
+	}
+
+	if len(points) > 0 {
+		tp := timeChartPayload{}
+		for _, p := range points {
+			tp.Labels = append(tp.Labels, p.Label)
+			tp.PRCounts = append(tp.PRCounts, p.PRCount)
+			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
+			tp.MedianSize = append(tp.MedianSize, roundTo1(p.MedianSize))
+			tp.AvgHours = append(tp.AvgHours, roundTo1(p.AvgSecs/3600))
+			tp.MedianHours = append(tp.MedianHours, roundTo1(p.MedianSecs/3600))
+			tp.ChangesRequestedRate = append(tp.ChangesRequestedRate, roundTo1(p.ChangesRequestedRate))
+		}
+		if raw, err := json.Marshal(tp); err == nil {
+			data.TimeChartJSON = template.JS(raw)
 		}
 	}
 
