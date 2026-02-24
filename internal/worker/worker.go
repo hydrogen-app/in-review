@@ -76,6 +76,20 @@ func (w *Worker) IsSyncing(fullName string) bool {
 	return w.rdb.QIsInProgress(context.Background(), fullName)
 }
 
+// QueuePosition returns the 1-based position in the pending queue, or 0 if the
+// repo is being actively synced by a worker, or -1 if not in progress at all.
+func (w *Worker) QueuePosition(fullName string) int {
+	ctx := context.Background()
+	if !w.rdb.QIsInProgress(ctx, fullName) {
+		return -1
+	}
+	pos := w.rdb.QPosition(ctx, fullName)
+	if pos < 0 {
+		return 0 // in-progress key set but not in queue → actively syncing
+	}
+	return int(pos) + 1 // convert to 1-based
+}
+
 // syncRepo performs the full GitHub data pull for one repository.
 func (w *Worker) syncRepo(fullName string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)

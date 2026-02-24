@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -117,17 +118,21 @@ func (h *Handler) SyncStatus(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	fullName := owner + "/" + name
 
-	isSyncing := h.worker.IsSyncing(fullName)
+	qpos := h.worker.QueuePosition(fullName)
 	repo, _ := h.db.GetRepo(fullName)
 
+	poll := `hx-get="/api/sync-status/` + owner + `/` + name + `" hx-trigger="every 2s" hx-swap="outerHTML"`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if isSyncing {
-		w.Write([]byte(`<span class="sync-badge syncing" hx-get="/api/sync-status/` + owner + `/` + name + `" hx-trigger="every 2s" hx-swap="outerHTML">⟳ Syncing…</span>`))
-		return
-	}
-	if repo != nil && repo.LastSynced != nil {
+	switch {
+	case qpos > 0:
+		// Waiting in queue — show position
+		w.Write([]byte(`<span class="sync-badge syncing" ` + poll + `>⟳ Queue position #` + fmt.Sprintf("%d", qpos) + `</span>`))
+	case qpos == 0:
+		// Popped from queue, worker is actively fetching
+		w.Write([]byte(`<span class="sync-badge syncing" ` + poll + `>⟳ Syncing…</span>`))
+	case repo != nil && repo.LastSynced != nil:
 		w.Write([]byte(`<span class="sync-badge done">✓ Synced ` + timeAgo(repo.LastSynced) + `</span>`))
-		return
+	default:
+		w.Write([]byte(`<span class="sync-badge pending">⏳ Pending</span>`))
 	}
-	w.Write([]byte(`<span class="sync-badge pending">⏳ Pending</span>`))
 }

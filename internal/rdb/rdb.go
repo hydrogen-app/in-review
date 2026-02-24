@@ -88,6 +88,16 @@ func (c *Client) QIsInProgress(ctx context.Context, fullName string) bool {
 	return c.rdb.Exists(ctx, inProgressPfx+fullName).Val() > 0
 }
 
+// QPosition returns the 0-based position of fullName in the pending queue,
+// or -1 if the item is not in the queue (either being actively synced or idle).
+func (c *Client) QPosition(ctx context.Context, fullName string) int64 {
+	pos, err := c.rdb.LPos(ctx, queueKey, fullName, redis.LPosArgs{}).Result()
+	if err != nil {
+		return -1
+	}
+	return pos
+}
+
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
 // RateLimit returns a chi-compatible middleware that limits requests per IP.
