@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
 
 	"inreview/internal/db"
+	"inreview/internal/rdb"
 )
 
 // StatsData is passed to the stats page template.
@@ -54,21 +56,64 @@ func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	trim, cutoffPct := parseTrim(r)
 
-	overall, _ := h.db.GlobalOverallStats()
-	buckets, _ := h.db.GlobalSizeChartData(cutoffPct)
-	points, _ := h.db.GlobalTimeSeriesData(cutoffPct)
+	// ── Cache check ────────────────────────────────────────────────
+	cacheKey := fmt.Sprintf("stats:v1:%d", trim)
+	if h.cache != nil {
+		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
+			var data StatsData
+			if json.Unmarshal(raw, &data) == nil {
+				h.render(w, "stats", data)
+				return
+			}
+		}
+	}
+
+	// ── Parallel DB queries ────────────────────────────────────────
+	type overallRes struct {
+		v   db.GlobalOverallStats
+		err error
+	}
+	type bucketsRes struct {
+		v   []db.GlobalSizeBucket
+		err error
+	}
+	type pointsRes struct {
+		v   []db.TimeSeriesPoint
+		err error
+	}
+
+	overallCh := make(chan overallRes, 1)
+	bucketsCh := make(chan bucketsRes, 1)
+	pointsCh := make(chan pointsRes, 1)
+
+	go func() {
+		v, err := h.db.GlobalOverallStats()
+		overallCh <- overallRes{v, err}
+	}()
+	go func() {
+		v, err := h.db.GlobalSizeChartData(cutoffPct)
+		bucketsCh <- bucketsRes{v, err}
+	}()
+	go func() {
+		v, err := h.db.GlobalTimeSeriesData(cutoffPct)
+		pointsCh <- pointsRes{v, err}
+	}()
+
+	overall := <-overallCh
+	buckets := <-bucketsCh
+	points := <-pointsCh
 
 	data := StatsData{
-		Overall: overall,
+		Overall: overall.v,
 		Trim:    trim,
 		OGTitle: "Global PR Stats — ngmi",
 		OGDesc:  "How PR size affects review time and changes requested, across all repos tracked on ngmi.",
 		OGUrl:   "https://ngmi.review/stats",
 	}
 
-	if len(buckets) > 0 {
+	if len(buckets.v) > 0 {
 		payload := statsChartPayload{}
-		for _, b := range buckets {
+		for _, b := range buckets.v {
 			payload.Labels = append(payload.Labels, b.Label)
 			payload.PRCounts = append(payload.PRCounts, b.PRCount)
 			payload.AvgHours = append(payload.AvgHours, roundTo1(b.AvgSecs/3600))
@@ -82,9 +127,9 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(points) > 0 {
+	if len(points.v) > 0 {
 		tp := timeChartPayload{}
-		for _, p := range points {
+		for _, p := range points.v {
 			tp.Labels = append(tp.Labels, p.Label)
 			tp.PRCounts = append(tp.PRCounts, p.PRCount)
 			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
@@ -95,6 +140,13 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		}
 		if raw, err := json.Marshal(tp); err == nil {
 			data.TimeChartJSON = template.JS(raw)
+		}
+	}
+
+	// ── Cache store ────────────────────────────────────────────────
+	if h.cache != nil {
+		if raw, err := json.Marshal(data); err == nil {
+			h.cache.Set(r.Context(), cacheKey, raw, rdb.CacheTTL)
 		}
 	}
 

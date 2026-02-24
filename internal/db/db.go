@@ -206,6 +206,7 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_hi_log_ts   ON page_hi_log(ts)`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS additions INTEGER DEFAULT 0`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS deletions INTEGER DEFAULT 0`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_merged_at ON pull_requests(merged_at) WHERE merged=TRUE`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {

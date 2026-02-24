@@ -204,7 +204,9 @@
       var pct = Math.round((lastVal - firstVal) / firstVal * 100);
       var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '→');
       var color = pct > 0 ? '#f85149' : (pct < 0 ? '#3fb950' : '#848d97');
-      return statCard(arrow + ' ' + Math.abs(pct) + '%', 'since ' + firstName, null, null);
+      var card = statCard(arrow + ' ' + Math.abs(pct) + '%', 'since ' + firstName, null, null);
+      card.querySelector('.chart-stat-num').style.color = color;
+      return card;
     }
 
     function populateAside(id, cards) {

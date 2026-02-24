@@ -197,7 +197,9 @@
       if (!fv || fv === 0) return null;
       var pct = Math.round((lv - fv) / fv * 100);
       var c = pct > 0 ? '#f85149' : (pct < 0 ? '#3fb950' : '#848d97');
-      return statCard((pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '→ ') + Math.abs(pct) + '% since ' + fn, 'vs ' + fn);
+      var card = statCard((pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '→ ') + Math.abs(pct) + '%', 'since ' + fn);
+      card.querySelector('.chart-stat-num').style.color = c;
+      return card;
     }
     function fill(id, cards) { var el = document.getElementById(id); cards.forEach(function(c){if(c)el.appendChild(c);}); }
 
