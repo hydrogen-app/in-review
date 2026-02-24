@@ -65,11 +65,11 @@
 </tr>
 {{end}}
 
-{{/* ── Sentinel: triggers next page load when scrolled into view ── */}}
+{{/* ── Sentinel: triggers next page load before scrolled into view ── */}}
 {{if .HasMore}}
 <tr
   hx-get="/leaderboard/{{.Category}}/rows?offset={{.NextOffset}}"
-  hx-trigger="intersect once"
+  hx-trigger="earlyIntersect once"
   hx-swap="outerHTML"
 >
   <td colspan="7" class="load-sentinel">loading…</td>

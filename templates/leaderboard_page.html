@@ -60,7 +60,7 @@
         {{if .HasMore}}
         <tr
           hx-get="/leaderboard/{{.Category}}/rows?offset={{.NextOffset}}"
-          hx-trigger="intersect once"
+          hx-trigger="earlyIntersect once"
           hx-swap="outerHTML"
         >
           <td colspan="6" class="load-sentinel">loading…</td>
@@ -106,7 +106,7 @@
         {{if .HasMore}}
         <tr
           hx-get="/leaderboard/{{.Category}}/rows?offset={{.NextOffset}}"
-          hx-trigger="intersect once"
+          hx-trigger="earlyIntersect once"
           hx-swap="outerHTML"
         >
           <td colspan="6" class="load-sentinel">loading…</td>
@@ -152,7 +152,7 @@
         {{if .HasMore}}
         <tr
           hx-get="/leaderboard/{{.Category}}/rows?offset={{.NextOffset}}"
-          hx-trigger="intersect once"
+          hx-trigger="earlyIntersect once"
           hx-swap="outerHTML"
         >
           <td colspan="4" class="load-sentinel">loading…</td>
@@ -189,7 +189,7 @@
         {{if .HasMore}}
         <tr
           hx-get="/leaderboard/{{.Category}}/rows?offset={{.NextOffset}}"
-          hx-trigger="intersect once"
+          hx-trigger="earlyIntersect once"
           hx-swap="outerHTML"
         >
           <td colspan="5" class="load-sentinel">loading…</td>
@@ -207,4 +207,30 @@
   {{end}}
 
 </div>
+
+<script>
+(function () {
+  var observed = new WeakSet();
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        io.unobserve(e.target);
+        htmx.trigger(e.target, 'earlyIntersect');
+      }
+    });
+  }, { rootMargin: '0px 0px 500px 0px' });
+
+  function observeSentinels() {
+    document.querySelectorAll('tr[hx-trigger^="earlyIntersect"]').forEach(function (el) {
+      if (!observed.has(el)) {
+        observed.add(el);
+        io.observe(el);
+      }
+    });
+  }
+
+  document.addEventListener('htmx:afterSettle', observeSentinels);
+  observeSentinels();
+})();
+</script>
 {{end}}
