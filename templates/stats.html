@@ -165,7 +165,9 @@
     var tickColor = '#848d97', gridColor = '#30363d';
     var baseX = { ticks: { color: tickColor, font: { size: 11 }, maxRotation: 45 }, grid: { color: gridColor } };
     var baseY = function(cb) {
-      return { ticks: { color: tickColor, font: { size: 11 }, callback: cb || null }, grid: { color: gridColor }, beginAtZero: true };
+      var tk = { color: tickColor, font: { size: 11 } };
+      if (cb) tk.callback = cb;
+      return { ticks: tk, grid: { color: gridColor }, beginAtZero: true };
     };
     var lineOpts = {
       responsive: true, maintainAspectRatio: false,
@@ -204,7 +206,19 @@
       data: { labels: t.labels, datasets: [
         { label: 'PRs merged', data: t.prCounts, borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true }
       ]},
-      options: Object.assign({}, noLegend, { scales: { x: baseX, y: baseY() } })
+      options: Object.assign({}, noLegend, {
+        scales: { x: baseX, y: baseY() },
+        plugins: Object.assign({}, noLegend.plugins, {
+          tooltip: { callbacks: { afterLabel: function(ctx) {
+            var i = ctx.dataIndex;
+            if (i === 0) return null;
+            var prev = ctx.dataset.data[i - 1];
+            if (!prev) return null;
+            var pct = Math.round((ctx.dataset.data[i] - prev) / prev * 100);
+            return (pct > 0 ? '▲ +' : pct < 0 ? '▼ ' : '→ ') + Math.abs(pct) + '% vs prev month';
+          }}}
+        })
+      })
     });
     new Chart(document.getElementById('tc-first-review'), {
       type: 'line',
@@ -313,7 +327,8 @@
     ]);
     populateAside('tc-count-aside', [
       statCard(t.prCounts[n-1] + ' PRs', 'Merged, ' + latest),
-      statCard(Math.max.apply(null, t.prCounts) + ' PRs', 'Peak month')
+      statCard(Math.max.apply(null, t.prCounts) + ' PRs', 'Peak month'),
+      trendCard(t.prCounts[0], t.prCounts[n-1], 0, 0, first)
     ]);
     populateAside('tc-first-review-aside', [
       statCard(t.avgFirstReviewHours[n-1] + 'h', 'Avg first review, ' + latest),
