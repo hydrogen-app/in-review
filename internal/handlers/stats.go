@@ -13,6 +13,7 @@ import (
 
 // StatsData is passed to the stats page template.
 type StatsData struct {
+	BaseData
 	Overall       db.GlobalOverallStats
 	SizeChartJSON template.JS
 	TimeChartJSON template.JS
@@ -39,6 +40,8 @@ type statsChartPayload struct {
 type timeChartPayload struct {
 	Labels               []string  `json:"labels"`
 	PRCounts             []int     `json:"prCounts"`
+	OpenedCounts         []int     `json:"openedCounts"`
+	MergeVsOpenRate      []float64 `json:"mergeVsOpenRate"`
 	AvgSize              []float64 `json:"avgSize"`
 	MedianSize           []float64 `json:"medianSize"`
 	AvgHours             []float64 `json:"avgHours"`
@@ -70,11 +73,12 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Cache check ────────────────────────────────────────────────
-	cacheKey := fmt.Sprintf("stats:v2:%d:%d:%d", trim, minStars, minContribs)
+	cacheKey := fmt.Sprintf("stats:v3:%d:%d:%d", trim, minStars, minContribs)
 	if h.cache != nil {
 		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
 			var data StatsData
 			if json.Unmarshal(raw, &data) == nil {
+				data.BaseData = h.baseData(r) // not cached — set per-request
 				h.render(w, "stats", data)
 				return
 			}
@@ -95,9 +99,15 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		err error
 	}
 
+	type openedRes struct {
+		v   []db.TimeSeriesPoint
+		err error
+	}
+
 	overallCh := make(chan overallRes, 1)
 	bucketsCh := make(chan bucketsRes, 1)
 	pointsCh := make(chan pointsRes, 1)
+	openedCh := make(chan openedRes, 1)
 
 	go func() {
 		v, err := h.db.GlobalOverallStats(minStars, minContribs)
@@ -111,10 +121,15 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		v, err := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
 		pointsCh <- pointsRes{v, err}
 	}()
+	go func() {
+		v, err := h.db.GlobalOpenedSeriesData(minStars, minContribs)
+		openedCh <- openedRes{v, err}
+	}()
 
 	overall := <-overallCh
 	buckets := <-bucketsCh
 	points := <-pointsCh
+	opened := <-openedCh
 
 	data := StatsData{
 		Overall:     overall.v,
@@ -156,6 +171,20 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 			tp.MedFirstReviewHours = append(tp.MedFirstReviewHours, roundTo1(p.MedFirstReviewSecs/3600))
 			tp.UnreviewedMergeRate = append(tp.UnreviewedMergeRate, roundTo1(p.UnreviewedRate))
 		}
+		// Build opened-per-month and merge rate aligned to merge-month labels.
+		openedMap := make(map[string]int)
+		for _, p := range opened.v {
+			openedMap[p.Label] = p.PRCount
+		}
+		for i, label := range tp.Labels {
+			oc := openedMap[label]
+			tp.OpenedCounts = append(tp.OpenedCounts, oc)
+			rate := 0.0
+			if oc > 0 {
+				rate = roundTo1(float64(tp.PRCounts[i]) / float64(oc) * 100)
+			}
+			tp.MergeVsOpenRate = append(tp.MergeVsOpenRate, rate)
+		}
 		if raw, err := json.Marshal(tp); err == nil {
 			data.TimeChartJSON = template.JS(raw)
 		}
@@ -168,5 +197,6 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	data.BaseData = h.baseData(r)
 	h.render(w, "stats", data)
 }

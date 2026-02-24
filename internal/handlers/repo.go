@@ -14,6 +14,7 @@ import (
 )
 
 type RepoData struct {
+	BaseData
 	Repo          *db.Repo
 	TopReviewers  []db.ReviewerStats
 	RecentPRs     []db.PullRequest
@@ -151,6 +152,7 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	data.ShareURL = "https://twitter.com/intent/tweet?text=" + url.QueryEscape(shareText) +
 		"&url=" + url.QueryEscape(data.OGUrl)
 
+	data.BaseData = h.baseData(r)
 	h.db.RecordVisit("/repo/"+fullName, "repo", fullName)
 	h.render(w, "repo", data)
 }

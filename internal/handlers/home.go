@@ -12,6 +12,7 @@ import (
 )
 
 type HomeData struct {
+	BaseData
 	TotalRepos      int
 	TotalPRs        int
 	TotalReviews    int
@@ -91,6 +92,7 @@ func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 		data.RecentVisits, _ = h.db.RecentVisits(5, nil)
 	}
 
+	data.BaseData = h.baseData(r)
 	h.render(w, "home", data)
 }
 

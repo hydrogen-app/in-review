@@ -186,6 +186,7 @@ func (h *Handler) HiPost(w http.ResponseWriter, r *http.Request) {
 }
 
 type HiWallData struct {
+	BaseData
 	Pages  interface{}
 	OGTitle string
 	OGDesc  string
@@ -199,6 +200,6 @@ func (h *Handler) HiWall(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, http.StatusInternalServerError, "Error", "Could not load hi wall")
 		return
 	}
-	h.render(w, "hi_wall", HiWallData{Pages: pages})
+	h.render(w, "hi_wall", HiWallData{BaseData: h.baseData(r), Pages: pages})
 }
 

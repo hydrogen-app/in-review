@@ -39,6 +39,14 @@
     <div class="nav-links">
       <a href="/stats" class="nav-link">Stats</a>
       <a href="https://github.com/hydrogen-app/in-review" target="_blank" rel="noopener" class="nav-link">GitHub ↗</a>
+      {{if .CurrentUser}}
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <form method="POST" action="/auth/logout" style="display:inline;margin:0;">
+          <button type="submit" class="nav-link" style="background:none;border:none;cursor:pointer;padding:0;font:inherit;color:inherit;">Logout</button>
+        </form>
+      {{else}}
+        <a href="/auth/github" class="nav-link">Connect Repos</a>
+      {{end}}
     </div>
   </nav>
 

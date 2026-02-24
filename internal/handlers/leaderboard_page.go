@@ -16,6 +16,7 @@ import (
 const pageSize = 100
 
 type LeaderboardPageData struct {
+	BaseData
 	Category    string
 	Title       string
 	Description string
@@ -57,6 +58,7 @@ func (h *Handler) LeaderboardPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.populateLeaderboardData(&data, category, 0)
+	data.BaseData = h.baseData(r)
 	h.render(w, "leaderboard_page", data)
 }
 

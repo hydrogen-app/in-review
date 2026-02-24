@@ -55,6 +55,7 @@ func main() {
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(middleware.Compress(5))
 	r.Use(cache.RateLimit(300, time.Minute))
+	r.Use(h.SessionLoader)
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
@@ -76,6 +77,16 @@ func main() {
 	r.Get("/hi-wall", h.HiWall)
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
+
+	// Auth routes
+	r.Get("/auth/github", h.AuthGitHub)
+	r.Get("/auth/github/callback", h.AuthGitHubCallback)
+	r.Post("/auth/logout", h.AuthLogout)
+	r.Post("/api/github/webhook", h.GitHubWebhook)
+
+	// Authenticated routes
+	r.Get("/dashboard", h.RequireAuth(h.Dashboard))
+	r.Post("/api/repos/add", h.RequireAuth(h.AddRepo))
 
 	log.Printf("ngmi listening on http://localhost:%s", cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))

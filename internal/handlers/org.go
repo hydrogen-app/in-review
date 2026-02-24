@@ -12,6 +12,7 @@ import (
 )
 
 type OrgData struct {
+	BaseData
 	Org             *db.User
 	Repos           []db.Repo
 	ReviewerBoard   []db.LeaderboardEntry
@@ -132,6 +133,7 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	data.OGTitle = orgName + " — ngmi"
 	data.OGUrl = "https://ngmi.review/org/" + orgName
 
+	data.BaseData = h.baseData(r)
 	h.db.RecordVisit("/org/"+orgName, "org", orgName)
 	h.render(w, "org", data)
 }

@@ -12,6 +12,7 @@ import (
 )
 
 type UserData struct {
+	BaseData
 	User             *db.User
 	ReviewerStats    *db.ReviewerStats
 	AuthorStats      *db.AuthorStats
@@ -135,6 +136,7 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 		data.OGDesc = "@" + username + " has no reviews on record. ngmi."
 	}
 
+	data.BaseData = h.baseData(r)
 	h.db.RecordVisit("/user/"+username, "user", username)
 	h.render(w, "user", data)
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"log"
@@ -14,6 +15,68 @@ import (
 	"inreview/internal/rdb"
 	"inreview/internal/worker"
 )
+
+// contextKey is a private type for context values to avoid collisions.
+type contextKey string
+
+const (
+	userLoginKey      contextKey = "userLogin"
+	installationIDKey contextKey = "installationID"
+)
+
+// BaseData is embedded in every full-page data struct so the layout template
+// can access the currently logged-in user without extra queries per handler.
+type BaseData struct {
+	CurrentUser string
+}
+
+// baseData builds a BaseData from the current request context.
+func (h *Handler) baseData(r *http.Request) BaseData {
+	return BaseData{CurrentUser: currentUser(r)}
+}
+
+// currentUser extracts the GitHub login from the request context.
+// Returns "" when not authenticated.
+func currentUser(r *http.Request) string {
+	login, _ := r.Context().Value(userLoginKey).(string)
+	return login
+}
+
+// installationID extracts the installation ID from the request context.
+// Returns 0 when not present.
+func installationID(r *http.Request) int64 {
+	id, _ := r.Context().Value(installationIDKey).(int64)
+	return id
+}
+
+// SessionLoader is a global middleware that loads session info from the
+// session_id cookie and injects the GitHub login + installation ID into the
+// request context. Public routes benefit from this too (e.g. nav state).
+func (h *Handler) SessionLoader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie("session_id"); err == nil {
+			if session, err := h.db.GetSession(cookie.Value); err == nil && session != nil {
+				ctx := context.WithValue(r.Context(), userLoginKey, session.Login)
+				if session.InstallationID != nil {
+					ctx = context.WithValue(ctx, installationIDKey, *session.InstallationID)
+				}
+				r = r.WithContext(ctx)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireAuth wraps a handler and redirects unauthenticated users to /auth/github.
+func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if currentUser(r) == "" {
+			http.Redirect(w, r, "/auth/github", http.StatusFound)
+			return
+		}
+		next(w, r)
+	}
+}
 
 // Handler holds all dependencies and parsed templates.
 type Handler struct {
@@ -63,7 +126,7 @@ func New(database *db.DB, gh *github.Client, w *worker.Worker, cache *rdb.Client
 func (h *Handler) loadTemplates() {
 	h.tmpls = make(map[string]*template.Template)
 
-	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats"}
+	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats", "dashboard"}
 	for _, page := range pages {
 		tmpl := template.Must(
 			template.New("").Funcs(h.funcMap).ParseFiles(
@@ -87,6 +150,7 @@ func (h *Handler) loadTemplates() {
 
 // ErrorData is passed to the error template.
 type ErrorData struct {
+	BaseData
 	Code     int
 	Title    string
 	Message  string
@@ -99,17 +163,27 @@ type ErrorData struct {
 
 // renderError renders the error page with the given HTTP status code.
 func (h *Handler) renderError(w http.ResponseWriter, code int, title, message string) {
+	h.renderErrorReq(w, nil, code, title, message)
+}
+
+// renderErrorReq renders the error page with session context (for nav state).
+func (h *Handler) renderErrorReq(w http.ResponseWriter, r *http.Request, code int, title, message string) {
 	tmpl, ok := h.tmpls["error"]
 	if !ok {
 		http.Error(w, message, code)
 		return
 	}
+	var base BaseData
+	if r != nil {
+		base = h.baseData(r)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
 	if err := tmpl.ExecuteTemplate(w, "layout", ErrorData{
-		Code:    code,
-		Title:   title,
-		Message: message,
+		BaseData: base,
+		Code:     code,
+		Title:    title,
+		Message:  message,
 	}); err != nil {
 		log.Printf("error template error: %v", err)
 	}

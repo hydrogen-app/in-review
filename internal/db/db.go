@@ -207,6 +207,19 @@ func (d *DB) migrate() error {
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS additions INTEGER DEFAULT 0`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS deletions INTEGER DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_at ON pull_requests(merged_at) WHERE merged=TRUE`,
+		`CREATE TABLE IF NOT EXISTS app_installations (
+			installation_id BIGINT      PRIMARY KEY,
+			github_login    TEXT        NOT NULL,
+			installed_at    TIMESTAMPTZ DEFAULT NOW(),
+			uninstalled_at  TIMESTAMPTZ
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_sessions (
+			session_id      TEXT        PRIMARY KEY,
+			github_login    TEXT        NOT NULL,
+			installation_id BIGINT,
+			created_at      TIMESTAMPTZ DEFAULT NOW(),
+			expires_at      TIMESTAMPTZ NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -1278,6 +1291,42 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 	return out, rows.Err()
 }
 
+// GlobalOpenedSeriesData returns monthly PR counts grouped by the month PRs were opened.
+// minStars / minContribs filter by repo stars and distinct PR-author count; pass 0 to skip.
+func (d *DB) GlobalOpenedSeriesData(minStars, minContribs int) ([]TimeSeriesPoint, error) {
+	rows, err := d.conn.Query(`
+		WITH repo_contribs AS (
+			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
+			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
+		)
+		SELECT
+			TO_CHAR(DATE_TRUNC('month', pr.opened_at), 'Mon YYYY') AS label,
+			COUNT(*) AS pr_count
+		FROM pull_requests pr
+		JOIN repos r ON r.full_name = pr.repo_full_name
+		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		WHERE pr.merged=TRUE AND pr.opened_at IS NOT NULL
+		  AND ($1 <= 0 OR r.stars >= $1)
+		  AND ($2 <= 0 OR rc.n >= $2)
+		GROUP BY DATE_TRUNC('month', pr.opened_at)
+		ORDER BY DATE_TRUNC('month', pr.opened_at)
+	`, minStars, minContribs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []TimeSeriesPoint
+	for rows.Next() {
+		var p TimeSeriesPoint
+		if err := rows.Scan(&p.Label, &p.PRCount); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // OrgTimeSeriesData returns monthly aggregated PR metrics across all repos
 // belonging to an org. cutoffPct trims high-outlier PRs; pass 1.0 for no trimming.
 func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesPoint, error) {
@@ -1551,4 +1600,113 @@ func (d *DB) UserPeerReviewers(login string, limit int) ([]User, error) {
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// ── Auth: sessions & installations ────────────────────────────────────────────
+
+// SessionInfo holds data about a validated user session.
+type SessionInfo struct {
+	Login          string
+	InstallationID *int64
+	ExpiresAt      time.Time
+}
+
+func (d *DB) CreateSession(sessionID, login string, installationID *int64, expiresAt time.Time) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO user_sessions (session_id, github_login, installation_id, expires_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT(session_id) DO UPDATE SET
+			github_login    = EXCLUDED.github_login,
+			installation_id = EXCLUDED.installation_id,
+			expires_at      = EXCLUDED.expires_at
+	`, sessionID, login, installationID, expiresAt)
+	return err
+}
+
+func (d *DB) GetSession(sessionID string) (*SessionInfo, error) {
+	s := &SessionInfo{}
+	var instID sql.NullInt64
+	err := d.conn.QueryRow(`
+		SELECT github_login, installation_id, expires_at
+		FROM user_sessions
+		WHERE session_id=$1 AND expires_at > NOW()
+	`, sessionID).Scan(&s.Login, &instID, &s.ExpiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if instID.Valid {
+		s.InstallationID = &instID.Int64
+	}
+	return s, nil
+}
+
+func (d *DB) DeleteSession(sessionID string) error {
+	_, err := d.conn.Exec(`DELETE FROM user_sessions WHERE session_id=$1`, sessionID)
+	return err
+}
+
+func (d *DB) UpsertInstallation(installationID int64, login string) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO app_installations (installation_id, github_login)
+		VALUES ($1, $2)
+		ON CONFLICT(installation_id) DO UPDATE SET
+			github_login   = EXCLUDED.github_login,
+			uninstalled_at = NULL
+	`, installationID, login)
+	return err
+}
+
+func (d *DB) DeactivateInstallation(installationID int64) error {
+	_, err := d.conn.Exec(`
+		UPDATE app_installations SET uninstalled_at=NOW()
+		WHERE installation_id=$1
+	`, installationID)
+	return err
+}
+
+// GetInstallationByLogin returns the active installation ID for a GitHub login, if any.
+func (d *DB) GetInstallationByLogin(login string) (*int64, error) {
+	var id int64
+	err := d.conn.QueryRow(`
+		SELECT installation_id FROM app_installations
+		WHERE github_login=$1 AND uninstalled_at IS NULL
+		ORDER BY installed_at DESC LIMIT 1
+	`, login).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+// LinkSessionInstallation updates the installation_id on an existing session.
+func (d *DB) LinkSessionInstallation(sessionID string, installationID int64) error {
+	_, err := d.conn.Exec(`
+		UPDATE user_sessions SET installation_id=$1 WHERE session_id=$2
+	`, installationID, sessionID)
+	return err
+}
+
+// UserOwnedTrackedRepos returns repos whose owner matches the given login and
+// that have been synced (sync_status = 'done').
+func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
+	rows, err := d.conn.Query(`
+		SELECT full_name, owner, name, description, stars, language, org_name,
+		       last_synced, sync_status, pr_count, merged_pr_count,
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
+		FROM repos
+		WHERE (owner = $1 OR org_name = $1)
+		ORDER BY merged_pr_count DESC
+		LIMIT 50
+	`, login)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRepos(rows)
 }
