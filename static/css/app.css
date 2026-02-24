@@ -606,7 +606,7 @@ p  { margin: 0 0 0.5rem; }
 .chart-aside       { display: flex; flex-direction: column; gap: 0.65rem; }
 .chart-stat        { background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 6px; padding: 0.65rem 0.8rem; }
 .chart-stat-num    { font-size: 1.1rem; font-weight: 700; color: var(--fg); display: block; line-height: 1.1; }
-.chart-stat-label  { font-size: 0.72rem; color: var(--muted); display: block; margin-top: 5px; line-height: 1.35; }
+.chart-stat-label  { font-size: 0.72rem; color: var(--muted); display: block; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); line-height: 1.35; }
 .chart-stat-trend  { font-size: 0.75rem; margin-top: 0.25rem; display: block; }
 .bucket-tbl        { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
 .bucket-tbl td     { padding: 0.2rem 0.25rem; color: var(--muted); }

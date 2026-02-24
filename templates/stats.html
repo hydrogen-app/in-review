@@ -199,14 +199,26 @@
       return div;
     }
 
-    function trendCard(firstVal, lastVal, firstName) {
-      if (!firstVal || firstVal === 0) return null;
-      var pct = Math.round((lastVal - firstVal) / firstVal * 100);
-      var arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '→');
-      var color = pct > 0 ? '#f85149' : (pct < 0 ? '#3fb950' : '#848d97');
-      var card = statCard(arrow + ' ' + Math.abs(pct) + '%', 'since ' + firstName, null, null);
-      card.querySelector('.chart-stat-num').style.color = color;
-      return card;
+    function trendCard(fAvg, lAvg, fMed, lMed, fn) {
+      var d = document.createElement('div'); d.className = 'chart-stat';
+      var any = false;
+      if (fAvg && fAvg !== 0) {
+        var pA = Math.round((lAvg - fAvg) / fAvg * 100);
+        var sA = document.createElement('span'); sA.className = 'chart-stat-num';
+        sA.textContent = (pA > 0 ? '▲ ' : pA < 0 ? '▼ ' : '→ ') + Math.abs(pA) + '% avg';
+        d.appendChild(sA); any = true;
+      }
+      if (fMed && fMed !== 0) {
+        var pM = Math.round((lMed - fMed) / fMed * 100);
+        var sM = document.createElement('span'); sM.className = 'chart-stat-num';
+        sM.textContent = (pM > 0 ? '▲ ' : pM < 0 ? '▼ ' : '→ ') + Math.abs(pM) + '% median';
+        d.appendChild(sM); any = true;
+      }
+      if (!any) return null;
+      var lbl = document.createElement('span'); lbl.className = 'chart-stat-label';
+      lbl.textContent = 'since ' + fn;
+      d.appendChild(lbl);
+      return d;
     }
 
     function populateAside(id, cards) {
@@ -219,17 +231,17 @@
     populateAside('tc-size-aside', [
       statCard(Math.round(t.avgSize[n-1]) + ' lines',    'Avg size, ' + latest),
       statCard(Math.round(t.medianSize[n-1]) + ' lines', 'Median size, ' + latest),
-      trendCard(t.avgSize[0], t.avgSize[n-1], first)
+      trendCard(t.avgSize[0], t.avgSize[n-1], t.medianSize[0], t.medianSize[n-1], first)
     ]);
     populateAside('tc-time-aside', [
       statCard(t.avgHours[n-1] + 'h',    'Avg review time, ' + latest),
       statCard(t.medianHours[n-1] + 'h', 'Median review time, ' + latest),
-      trendCard(t.avgHours[0], t.avgHours[n-1], first)
+      trendCard(t.avgHours[0], t.avgHours[n-1], t.medianHours[0], t.medianHours[n-1], first)
     ]);
     populateAside('tc-crrate-aside', [
       statCard(t.changesRequestedRate[n-1] + '%', 'Rate, ' + latest),
       statCard(t.changesRequestedRate[0] + '%',   'Rate, ' + first),
-      trendCard(t.changesRequestedRate[0], t.changesRequestedRate[n-1], first)
+      trendCard(t.changesRequestedRate[0], t.changesRequestedRate[n-1], 0, 0, first)
     ]);
     populateAside('tc-count-aside', [
       statCard(t.prCounts[n-1] + ' PRs', 'Merged, ' + latest),
