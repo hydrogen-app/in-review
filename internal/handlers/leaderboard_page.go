@@ -24,6 +24,9 @@ type LeaderboardPageData struct {
 	CleanRows   []db.CleanLeaderboardRow
 	HasMore     bool
 	NextOffset  int
+	OGTitle     string
+	OGDesc      string
+	OGUrl       string
 }
 
 var leaderboardMeta = map[string][2]string{
@@ -48,6 +51,9 @@ func (h *Handler) LeaderboardPage(w http.ResponseWriter, r *http.Request) {
 		Category:    category,
 		Title:       meta[0],
 		Description: meta[1],
+		OGTitle:     meta[0] + " — ngmi",
+		OGDesc:      meta[1] + ". Global PR review leaderboards at ngmi.review.",
+		OGUrl:       "https://ngmi.review/leaderboard/" + category,
 	}
 
 	h.populateLeaderboardData(&data, category, 0)

@@ -185,6 +185,13 @@ func (h *Handler) HiPost(w http.ResponseWriter, r *http.Request) {
 	hiWidget(w, path, total, reactions, todayCount, true, myReaction)
 }
 
+type HiWallData struct {
+	Pages  interface{}
+	OGTitle string
+	OGDesc  string
+	OGUrl   string
+}
+
 // HiWall renders the hi wall page — top pages by hi count.
 func (h *Handler) HiWall(w http.ResponseWriter, r *http.Request) {
 	pages, err := h.db.HiTopWallPages(50)
@@ -192,6 +199,6 @@ func (h *Handler) HiWall(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, http.StatusInternalServerError, "Error", "Could not load hi wall")
 		return
 	}
-	h.render(w, "hi_wall", pages)
+	h.render(w, "hi_wall", HiWallData{Pages: pages})
 }
 

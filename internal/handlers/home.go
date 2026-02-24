@@ -20,7 +20,9 @@ type HomeData struct {
 	OneShot         []db.LeaderboardEntry
 	PopularVisits   []db.PageVisit
 	RecentVisits    []db.PageVisit
+	OGTitle         string
 	OGDesc          string
+	OGUrl           string
 }
 
 func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {

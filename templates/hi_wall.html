@@ -10,9 +10,9 @@
   <p class="muted">pages where people said hi</p>
 </div>
 
-{{if .}}
+{{if .Pages}}
 <div class="hi-wall-list">
-  {{range $i, $p := .}}
+  {{range $i, $p := .Pages}}
   <a href="{{$p.Path}}" class="hi-wall-row">
     <span class="hi-wall-rank muted">{{add $i 1}}</span>
     <span class="hi-wall-label">{{$p.Label}}</span>

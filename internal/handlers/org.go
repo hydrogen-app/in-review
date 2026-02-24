@@ -17,6 +17,9 @@ type OrgData struct {
 	TotalMergedPRs  int
 	TotalReviews    int
 	IsSyncing       bool
+	OGTitle         string
+	OGDesc          string
+	OGUrl           string
 }
 
 func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +102,8 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	}
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)
+	data.OGTitle = orgName + " — ngmi"
+	data.OGUrl = "https://ngmi.review/org/" + orgName
 
 	h.db.RecordVisit("/org/"+orgName, "org", orgName)
 	h.render(w, "org", data)

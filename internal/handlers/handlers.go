@@ -92,6 +92,9 @@ type ErrorData struct {
 	Message  string
 	Detail   string
 	RetryURL string
+	OGTitle  string
+	OGDesc   string
+	OGUrl    string
 }
 
 // renderError renders the error page with the given HTTP status code.
