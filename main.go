@@ -64,6 +64,8 @@ func main() {
 	r.Get("/user/{username}", h.User)
 	r.Get("/org/{org}", h.Org)
 
+	r.Get("/badge/{owner}/{name}.svg", h.Badge)
+
 	r.Get("/leaderboard/{category}", h.LeaderboardPage)
 	r.Get("/leaderboard/{category}/rows", h.LeaderboardRows)
 	r.Get("/leaderboard/{category}/search", h.LeaderboardSearch)

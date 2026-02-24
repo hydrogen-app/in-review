@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
@@ -19,6 +20,7 @@ type HomeData struct {
 	OneShot         []db.LeaderboardEntry
 	PopularVisits   []db.PageVisit
 	RecentVisits    []db.PageVisit
+	OGDesc          string
 }
 
 func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +43,8 @@ func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 		log.Printf("home: LeaderboardAuthors error: %v", err)
 	}
 	data.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
+
+	data.OGDesc = fmt.Sprintf("%d PRs analyzed across %d repos. Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.", data.TotalPRs, data.TotalRepos)
 
 	data.PopularVisits, _ = h.db.PopularVisits(3)
 	if len(data.PopularVisits) > 0 {

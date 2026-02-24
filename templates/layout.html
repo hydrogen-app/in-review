@@ -5,7 +5,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{block "title" .}}ngmi — PR Review Leaderboards{{end}}</title>
+  {{if .OGDesc}}
+  <meta name="description" content="{{.OGDesc}}" />
+  {{else}}
   <meta name="description" content="Global leaderboards for GitHub PR review time. Track speed, reviewers, and merge stats across any public repo." />
+  {{end}}
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="ngmi" />
+  <meta property="og:title" content="{{if .OGTitle}}{{.OGTitle}}{{else}}ngmi — PR Review Leaderboards{{end}}" />
+  <meta property="og:description" content="{{if .OGDesc}}{{.OGDesc}}{{else}}Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.{{end}}" />
+  <meta property="og:url" content="{{if .OGUrl}}{{.OGUrl}}{{else}}https://ngmi.review{{end}}" />
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="{{if .OGTitle}}{{.OGTitle}}{{else}}ngmi — PR Review Leaderboards{{end}}" />
+  <meta name="twitter:description" content="{{if .OGDesc}}{{.OGDesc}}{{else}}Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.{{end}}" />
 
   <!-- HTMX -->
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,6 +21,10 @@ type RepoData struct {
 	IsSyncing     bool
 	OwnerUser     *db.User
 	SizeChartJSON template.JS
+	OGTitle       string
+	OGDesc        string
+	OGUrl         string
+	ShareURL      string
 }
 
 // sizeChartPayload is marshaled to JSON and embedded directly in the repo page.
@@ -97,6 +102,30 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 			data.SizeChartJSON = template.JS(raw)
 		}
 	}
+
+	// ── OG / share metadata ───────────────────────────────────────────────────
+	data.OGTitle = fullName + " — ngmi"
+	data.OGUrl = "https://ngmi.review/repo/" + fullName
+	ogDesc := fullName
+	if repo.AvgMergeTimeSecs > 0 {
+		ogDesc += " merges PRs in " + formatDuration(repo.AvgMergeTimeSecs) + " on average"
+	}
+	if data.SpeedRank > 0 {
+		ogDesc += fmt.Sprintf(" (#%d globally)", data.SpeedRank)
+	}
+	ogDesc += ". Track your repo at ngmi.review."
+	data.OGDesc = ogDesc
+
+	shareText := fullName
+	if repo.AvgMergeTimeSecs > 0 {
+		shareText += " merges PRs in " + formatDuration(repo.AvgMergeTimeSecs)
+	}
+	if data.SpeedRank > 0 {
+		shareText += fmt.Sprintf(", #%d globally", data.SpeedRank)
+	}
+	shareText += ". If you aren't reviewing, you're ngmi."
+	data.ShareURL = "https://twitter.com/intent/tweet?text=" + url.QueryEscape(shareText) +
+		"&url=" + url.QueryEscape(data.OGUrl)
 
 	h.db.RecordVisit("/repo/"+fullName, "repo", fullName)
 	h.render(w, "repo", data)

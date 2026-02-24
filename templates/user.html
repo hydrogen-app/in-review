@@ -25,6 +25,34 @@
     <a href="https://github.com/{{.User.Login}}" target="_blank" rel="noopener" class="btn btn-outline">GitHub ↗</a>
   </div>
 
+  <!-- ── Verdict card ── -->
+  {{if not .ReviewerStats}}
+  <div class="verdict-card verdict-shame">
+    <p class="verdict-text">No reviews on record. ngmi.</p>
+  </div>
+  {{else if not (gt .ReviewerStats.TotalReviews 0)}}
+  <div class="verdict-card verdict-shame">
+    <p class="verdict-text">No reviews on record. ngmi.</p>
+  </div>
+  {{else}}
+  <div class="verdict-card">
+    {{if and (gt .ReviewerRank 0) (le .ReviewerRank 3)}}
+    <p class="verdict-text">#{{.ReviewerRank}} globally — {{formatNumber .ReviewerStats.TotalReviews}} reviews, {{percent .ReviewerStats.Approvals .ReviewerStats.TotalReviews}}% clean approvals. The rest? ngmi.</p>
+    {{else if and (gt .ReviewerRank 0) (le .ReviewerRank 100)}}
+    <p class="verdict-text">#{{.ReviewerRank}} globally — {{formatNumber .ReviewerStats.TotalReviews}} reviews, {{percent .ReviewerStats.Approvals .ReviewerStats.TotalReviews}}% approval rate.</p>
+    {{else if gt .ReviewerRank 0}}
+    <p class="verdict-text">#{{.ReviewerRank}} globally — {{formatNumber .ReviewerStats.TotalReviews}} reviews, {{percent .ReviewerStats.Approvals .ReviewerStats.TotalReviews}}% approval rate.</p>
+    {{else}}
+    <p class="verdict-text">{{formatNumber .ReviewerStats.TotalReviews}} reviews, {{percent .ReviewerStats.Approvals .ReviewerStats.TotalReviews}}% approval rate.{{if .IsNGMI}} Keep reviewing.{{end}}</p>
+    {{end}}
+    {{if .ShareURL}}
+    <div class="verdict-actions">
+      <a href="{{.ShareURL}}" target="_blank" rel="noopener" class="btn btn-sm btn-outline">Share on X →</a>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
   <!-- ── Global Ranks ── -->
   {{if or .ReviewerRank (or .GatekeeperRank .AuthorRank)}}
   <div class="rank-banner">

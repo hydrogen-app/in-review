@@ -45,6 +45,15 @@
         hx-swap="none"
         hx-on::after-request="window.location.reload()"
       >↻ Sync Now</button>
+      {{if .ShareURL}}
+      <a href="{{.ShareURL}}" target="_blank" rel="noopener" class="btn btn-sm btn-outline">Share on X →</a>
+      {{end}}
+    </div>
+    <!-- README badge snippet -->
+    <div class="badge-snippet-wrap">
+      <span class="badge-snippet-label">README badge:</span>
+      <code class="badge-snippet">[![ngmi](https://ngmi.review/badge/{{.Repo.Owner}}/{{.Repo.Name}}.svg)](https://ngmi.review/repo/{{.Repo.Owner}}/{{.Repo.Name}})</code>
+      <button class="btn btn-sm btn-outline" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">Copy</button>
     </div>
   </div>
 
