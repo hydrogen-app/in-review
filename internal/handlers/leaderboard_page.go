@@ -13,7 +13,7 @@ import (
 	"inreview/internal/rdb"
 )
 
-const pageSize = 50
+const pageSize = 100
 
 type LeaderboardPageData struct {
 	Category    string
@@ -302,7 +302,7 @@ func (h *Handler) populateLeaderboardData(data *LeaderboardPageData, category st
 	hasResults := len(cached.RepoRows) > 0 || len(cached.UserRows) > 0 || len(cached.CleanRows) > 0
 	if hasResults {
 		if raw, err := json.Marshal(cached); err == nil {
-			h.cache.Set(ctx, cacheKey, raw, rdb.CacheTTL)
+			h.cache.Set(ctx, cacheKey, raw, rdb.LeaderboardCacheTTL)
 		}
 	}
 

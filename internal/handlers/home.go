@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"inreview/internal/db"
 )
@@ -25,26 +28,55 @@ type HomeData struct {
 	OGUrl           string
 }
 
+// homeLBCache holds the six mini-leaderboard slices rendered on the home page.
+type homeLBCache struct {
+	SpeedDemons []db.LeaderboardEntry
+	PRGraveyard []db.LeaderboardEntry
+	ReviewChamps []db.LeaderboardEntry
+	Gatekeepers  []db.LeaderboardEntry
+	MergeMasters []db.LeaderboardEntry
+	OneShot      []db.LeaderboardEntry
+}
+
+const homeLBCacheKey = "home:lb"
+const homeLBCacheTTL = 3 * time.Minute
+
 func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
 	data := HomeData{}
 	data.TotalRepos, data.TotalPRs, data.TotalReviews = h.db.TotalStats()
 
-	data.SpeedDemons, _ = h.db.LeaderboardReposBySpeed("ASC", 5)
-	data.PRGraveyard, _ = h.db.LeaderboardReposBySpeed("DESC", 5)
-	var err error
-	data.ReviewChamps, err = h.db.LeaderboardReviewers(5)
-	if err != nil {
-		log.Printf("home: LeaderboardReviewers error: %v", err)
+	ctx := context.Background()
+	var lb homeLBCache
+	if raw, ok := h.cache.Get(ctx, homeLBCacheKey); ok {
+		_ = json.Unmarshal(raw, &lb)
+	} else {
+		var err error
+		lb.SpeedDemons, _ = h.db.LeaderboardReposBySpeed("ASC", 5)
+		lb.PRGraveyard, _ = h.db.LeaderboardReposBySpeed("DESC", 5)
+		lb.ReviewChamps, err = h.db.LeaderboardReviewers(5)
+		if err != nil {
+			log.Printf("home: LeaderboardReviewers error: %v", err)
+		}
+		lb.Gatekeepers, err = h.db.LeaderboardGatekeepers(5)
+		if err != nil {
+			log.Printf("home: LeaderboardGatekeepers error: %v", err)
+		}
+		lb.MergeMasters, err = h.db.LeaderboardAuthors(5)
+		if err != nil {
+			log.Printf("home: LeaderboardAuthors error: %v", err)
+		}
+		lb.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
+		if raw, err := json.Marshal(lb); err == nil {
+			h.cache.Set(ctx, homeLBCacheKey, raw, homeLBCacheTTL)
+		}
 	}
-	data.Gatekeepers, err = h.db.LeaderboardGatekeepers(5)
-	if err != nil {
-		log.Printf("home: LeaderboardGatekeepers error: %v", err)
-	}
-	data.MergeMasters, err = h.db.LeaderboardAuthors(5)
-	if err != nil {
-		log.Printf("home: LeaderboardAuthors error: %v", err)
-	}
-	data.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
+	data.SpeedDemons = lb.SpeedDemons
+	data.PRGraveyard = lb.PRGraveyard
+	data.ReviewChamps = lb.ReviewChamps
+	data.Gatekeepers = lb.Gatekeepers
+	data.MergeMasters = lb.MergeMasters
+	data.OneShot = lb.OneShot
+
 
 	data.OGDesc = fmt.Sprintf("%d PRs analyzed across %d repos. Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.", data.TotalPRs, data.TotalRepos)
 
