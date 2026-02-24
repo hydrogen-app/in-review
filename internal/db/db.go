@@ -49,6 +49,7 @@ type PullRequest struct {
 	ChangesRequestedCount int
 	Additions             int
 	Deletions             int
+	FirstReviewAt         *time.Time
 }
 
 type Review struct {
@@ -207,6 +208,14 @@ func (d *DB) migrate() error {
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS additions INTEGER DEFAULT 0`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS deletions INTEGER DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_at ON pull_requests(merged_at) WHERE merged=TRUE`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_merged_contrib ON pull_requests(merged, repo_full_name, author_login) WHERE merged=TRUE`,
+		`CREATE INDEX IF NOT EXISTS idx_rev_repo_pr_time ON reviews(repo_full_name, pr_number, submitted_at)`,
+		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS first_review_at TIMESTAMPTZ`,
+		`UPDATE pull_requests SET first_review_at = (
+			SELECT MIN(submitted_at) FROM reviews
+			WHERE reviews.repo_full_name = pull_requests.repo_full_name
+			  AND reviews.pr_number = pull_requests.number
+		) WHERE first_review_at IS NULL AND review_count > 0`,
 		`CREATE TABLE IF NOT EXISTS app_installations (
 			installation_id BIGINT      PRIMARY KEY,
 			github_login    TEXT        NOT NULL,
@@ -272,8 +281,8 @@ func (d *DB) UpdateSyncStatus(fullName, status string) error {
 func (d *DB) UpsertPR(pr PullRequest) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO pull_requests
-			(id, repo_full_name, number, title, author_login, merged, opened_at, merged_at, merge_time_secs, review_count, changes_requested_count, additions, deletions)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			(id, repo_full_name, number, title, author_login, merged, opened_at, merged_at, merge_time_secs, review_count, changes_requested_count, additions, deletions, first_review_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT(repo_full_name, number) DO UPDATE SET
 			title                   = EXCLUDED.title,
 			merged                  = EXCLUDED.merged,
@@ -282,10 +291,11 @@ func (d *DB) UpsertPR(pr PullRequest) error {
 			review_count            = EXCLUDED.review_count,
 			changes_requested_count = EXCLUDED.changes_requested_count,
 			additions               = EXCLUDED.additions,
-			deletions               = EXCLUDED.deletions
+			deletions               = EXCLUDED.deletions,
+			first_review_at         = EXCLUDED.first_review_at
 	`, pr.ID, pr.RepoFullName, pr.Number, pr.Title, pr.AuthorLogin, pr.Merged,
 		pr.OpenedAt.UTC(), pr.MergedAt, pr.MergeTimeSecs,
-		pr.ReviewCount, pr.ChangesRequestedCount, pr.Additions, pr.Deletions)
+		pr.ReviewCount, pr.ChangesRequestedCount, pr.Additions, pr.Deletions, pr.FirstReviewAt)
 	return err
 }
 
@@ -1170,12 +1180,6 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 			) AS cutoff_val
 			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
 		),
-		first_review AS (
-			SELECT repo_full_name, pr_number,
-			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
-			FROM reviews
-			GROUP BY repo_full_name, pr_number
-		),
 		repo_contribs AS (
 			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
 			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
@@ -1192,12 +1196,12 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate,
-			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+			COALESCE(AVG(CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS avg_first_review_secs,
 			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
-				CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS median_first_review_secs,
 			COALESCE(
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
@@ -1206,7 +1210,6 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 			) AS unreviewed_rate
 		FROM pull_requests pr
 		CROSS JOIN cutoff
-		LEFT JOIN first_review fr ON fr.repo_full_name = pr.repo_full_name AND fr.pr_number = pr.number
 		JOIN repos r ON r.full_name = pr.repo_full_name
 		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
@@ -1244,13 +1247,6 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 				9999999999.0
 			) AS cutoff_val
 			FROM pull_requests WHERE repo_full_name=$1 AND merged=TRUE AND merge_time_secs > 0
-		),
-		first_review AS (
-			SELECT pr_number,
-			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
-			FROM reviews
-			WHERE repo_full_name=$1
-			GROUP BY pr_number
 		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
@@ -1264,12 +1260,12 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate,
-			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+			COALESCE(AVG(CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS avg_first_review_secs,
 			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
-				CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS median_first_review_secs,
 			COALESCE(
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
@@ -1278,7 +1274,6 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 			) AS unreviewed_rate
 		FROM pull_requests pr
 		CROSS JOIN cutoff
-		LEFT JOIN first_review fr ON fr.pr_number = pr.number
 		WHERE pr.repo_full_name=$1 AND pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
 		GROUP BY DATE_TRUNC('month', pr.merged_at)
@@ -1353,13 +1348,6 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 			FROM pull_requests
 			WHERE repo_full_name IN (SELECT full_name FROM org_repos)
 			  AND merged=TRUE AND merge_time_secs > 0
-		),
-		first_review AS (
-			SELECT repo_full_name, pr_number,
-			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
-			FROM reviews
-			WHERE repo_full_name IN (SELECT full_name FROM org_repos)
-			GROUP BY repo_full_name, pr_number
 		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
@@ -1373,12 +1361,12 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate,
-			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+			COALESCE(AVG(CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS avg_first_review_secs,
 			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
-				CASE WHEN fr.epoch IS NOT NULL
-				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				CASE WHEN pr.first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM pr.first_review_at) - EXTRACT(EPOCH FROM pr.opened_at))
 				ELSE NULL END), 0) AS median_first_review_secs,
 			COALESCE(
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
@@ -1387,7 +1375,6 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 			) AS unreviewed_rate
 		FROM pull_requests pr
 		CROSS JOIN cutoff
-		LEFT JOIN first_review fr ON fr.repo_full_name = pr.repo_full_name AND fr.pr_number = pr.number
 		WHERE pr.repo_full_name IN (SELECT full_name FROM org_repos)
 		  AND pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)

@@ -17,7 +17,7 @@ const (
 	rateLimitPfx  = "inreview:rl:"
 
 	inProgressTTL      = 20 * time.Minute // exceeds max sync timeout (15 min)
-	CacheTTL           = 5 * time.Minute
+	CacheTTL           = 30 * time.Minute
 	LeaderboardCacheTTL = 10 * time.Minute
 )
 

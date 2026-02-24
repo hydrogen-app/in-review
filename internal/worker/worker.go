@@ -240,6 +240,10 @@ func (w *Worker) syncRepo(fullName string) {
 			if rev.State == "CHANGES_REQUESTED" {
 				pr.ChangesRequestedCount++
 			}
+			if pr.FirstReviewAt == nil || rev.SubmittedAt.Before(*pr.FirstReviewAt) {
+				t := rev.SubmittedAt
+				pr.FirstReviewAt = &t
+			}
 			w.db.UpsertUser(db.User{
 				Login:     rev.User.Login,
 				AvatarURL: rev.User.AvatarURL,
