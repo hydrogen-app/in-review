@@ -62,7 +62,7 @@ func main() {
 	// Worker is used only to push to the Redis queue — Start() is intentionally
 	// not called so no extra goroutines compete with the main server's workers.
 	ghClient := github.NewClient(cfg.GitHubToken)
-	w := worker.New(ghClient, database, cache)
+	w := worker.New(ghClient, database, cache, cfg.GitHubAppID, cfg.GitHubAppPrivateKey)
 
 	queued := 0
 	for _, repo := range repos {

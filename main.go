@@ -44,7 +44,7 @@ func main() {
 	ghClient := github.NewClient(cfg.GitHubToken)
 
 	// Sync worker
-	w := worker.New(ghClient, database, cache)
+	w := worker.New(ghClient, database, cache, cfg.GitHubAppID, cfg.GitHubAppPrivateKey)
 	w.Start()
 
 	// HTTP router

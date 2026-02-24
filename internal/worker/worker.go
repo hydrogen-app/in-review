@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
+	"inreview/internal/auth"
 	"inreview/internal/db"
 	"inreview/internal/github"
 	"inreview/internal/rdb"
@@ -19,15 +21,80 @@ const (
 	popTimeout    = 30 * time.Second
 )
 
-// Worker manages background GitHub sync jobs.
-type Worker struct {
-	gh  *github.Client
-	db  *db.DB
-	rdb *rdb.Client
+type cachedToken struct {
+	token     string
+	expiresAt time.Time
 }
 
-func New(gh *github.Client, db *db.DB, rdb *rdb.Client) *Worker {
-	return &Worker{gh: gh, db: db, rdb: rdb}
+// Worker manages background GitHub sync jobs.
+type Worker struct {
+	gh         *github.Client
+	db         *db.DB
+	rdb        *rdb.Client
+	appID      int64
+	appPrivKey string
+
+	tokenMu    sync.RWMutex
+	tokenCache map[int64]cachedToken // installation ID → token
+}
+
+func New(gh *github.Client, db *db.DB, rdb *rdb.Client, appID int64, appPrivKey string) *Worker {
+	return &Worker{
+		gh:         gh,
+		db:         db,
+		rdb:        rdb,
+		appID:      appID,
+		appPrivKey: appPrivKey,
+		tokenCache: make(map[int64]cachedToken),
+	}
+}
+
+// installationClient returns a GitHub client using the installation token for
+// the given org/owner login. Falls back to the global client if the app is not
+// configured or no installation is found.
+func (w *Worker) installationClient(ctx context.Context, ownerLogin string) *github.Client {
+	if w.appID == 0 || w.appPrivKey == "" {
+		return w.gh
+	}
+
+	instID, err := w.db.GetInstallationByLogin(ownerLogin)
+	if err != nil || instID == nil {
+		return w.gh
+	}
+
+	// Check cache under read lock — hot path, no blocking.
+	w.tokenMu.RLock()
+	entry, ok := w.tokenCache[*instID]
+	w.tokenMu.RUnlock()
+	if ok && time.Now().Before(entry.expiresAt) {
+		return w.gh.WithToken(entry.token)
+	}
+
+	// Cache miss: generate a fresh token WITHOUT holding the lock.
+	// Two goroutines may race here on first use, but both tokens are valid
+	// and only one extra API call is wasted — far better than blocking all workers.
+	key, err := auth.ParsePrivateKey(w.appPrivKey)
+	if err != nil {
+		log.Printf("[worker] parse app private key: %v", err)
+		return w.gh
+	}
+	appJWT, err := auth.GenerateAppJWT(w.appID, key)
+	if err != nil {
+		log.Printf("[worker] generate app JWT: %v", err)
+		return w.gh
+	}
+	token, expiresAt, err := auth.GetInstallationToken(appJWT, fmt.Sprintf("%d", *instID))
+	if err != nil {
+		log.Printf("[worker] get installation token for %s: %v", ownerLogin, err)
+		return w.gh
+	}
+
+	w.tokenMu.Lock()
+	w.tokenCache[*instID] = cachedToken{token: token, expiresAt: expiresAt.Add(-2 * time.Minute)}
+	w.tokenMu.Unlock()
+
+	log.Printf("[worker] fetched installation token for %s (inst %d, expires %s)", ownerLogin, *instID, expiresAt.Format(time.RFC3339))
+	return w.gh.WithToken(token)
 }
 
 // Start launches background sync goroutines.
@@ -104,8 +171,8 @@ func (w *Worker) syncRepo(fullName string) {
 	log.Printf("[sync] starting %s", fullName)
 	w.db.UpdateSyncStatus(fullName, "syncing")
 
-	// Single GraphQL call fetches repo metadata, owner, and all merged PRs with reviews.
-	result, err := w.gh.SyncRepo(ctx, owner, name, maxPRsPerRepo)
+	gh := w.installationClient(ctx, owner)
+	result, err := gh.SyncRepo(ctx, owner, name, maxPRsPerRepo)
 	if err != nil {
 		log.Printf("[sync] error fetching %s: %v", fullName, err)
 		w.db.UpdateSyncStatus(fullName, "error")

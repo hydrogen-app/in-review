@@ -32,9 +32,15 @@ type Client struct {
 
 func NewClient(token string) *Client {
 	return &Client{
-		token: token,
+		token:      token,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// WithToken returns a new Client that shares the same HTTP client but uses a
+// different auth token. Used by the worker to swap in installation tokens.
+func (c *Client) WithToken(token string) *Client {
+	return &Client{token: token, httpClient: c.httpClient}
 }
 
 // ── Transport ─────────────────────────────────────────────────────────────────
