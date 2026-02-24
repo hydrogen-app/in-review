@@ -946,10 +946,17 @@ type PRSizeBucket struct {
 }
 
 // RepoSizeChartData returns PR count, avg review time, and approval rate
-// grouped into five size buckets (by additions+deletions).
-// Only PRs with size data (additions+deletions > 0) are included.
-func (d *DB) RepoSizeChartData(fullName string) ([]PRSizeBucket, error) {
+// grouped into five size buckets. cutoffPct (0.0–1.0) trims high-outlier PRs
+// by merge time; pass 1.0 for no trimming.
+func (d *DB) RepoSizeChartData(fullName string, cutoffPct float64) ([]PRSizeBucket, error) {
 	rows, err := d.conn.Query(`
+		WITH cutoff AS (
+			SELECT COALESCE(
+				percentile_cont($2) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
+				9999999999.0
+			) AS p
+			FROM pull_requests WHERE repo_full_name=$1 AND merged=TRUE AND merge_time_secs > 0
+		)
 		SELECT
 			CASE
 				WHEN (additions + deletions) <= 50   THEN 1
@@ -965,11 +972,12 @@ func (d *DB) RepoSizeChartData(fullName string) ([]PRSizeBucket, error) {
 				NULLIF(SUM(CASE WHEN review_count>0 THEN 1 ELSE 0 END), 0),
 				0
 			) AS approval_rate
-		FROM pull_requests
+		FROM pull_requests, cutoff
 		WHERE repo_full_name=$1 AND merged=TRUE AND (additions + deletions) > 0
+		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
 		GROUP BY bucket
 		ORDER BY bucket
-	`, fullName)
+	`, fullName, cutoffPct)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,10 +1020,17 @@ type GlobalOverallStats struct {
 	MedianSecs int64
 }
 
-// GlobalSizeChartData returns per-bucket metrics (avg/median review time,
-// approval rate, changes-requested rate) across all repos.
-func (d *DB) GlobalSizeChartData() ([]GlobalSizeBucket, error) {
+// GlobalSizeChartData returns per-bucket metrics across all repos.
+// cutoffPct trims high-outlier PRs by merge time; pass 1.0 for no trimming.
+func (d *DB) GlobalSizeChartData(cutoffPct float64) ([]GlobalSizeBucket, error) {
 	rows, err := d.conn.Query(`
+		WITH cutoff AS (
+			SELECT COALESCE(
+				percentile_cont($1) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
+				9999999999.0
+			) AS p
+			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
+		)
 		SELECT
 			CASE
 				WHEN (additions + deletions) <= 50   THEN 1
@@ -1038,11 +1053,12 @@ func (d *DB) GlobalSizeChartData() ([]GlobalSizeBucket, error) {
 				0
 			) AS changes_requested_rate,
 			COALESCE(AVG(changes_requested_count)::FLOAT, 0) AS avg_changes_requested
-		FROM pull_requests
+		FROM pull_requests, cutoff
 		WHERE merged=TRUE AND (additions + deletions) > 0
+		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
 		GROUP BY bucket
 		ORDER BY bucket
-	`)
+	`, cutoffPct)
 	if err != nil {
 		return nil, err
 	}
@@ -1094,11 +1110,17 @@ type TimeSeriesPoint struct {
 	ChangesRequestedRate float64
 }
 
-// GlobalTimeSeriesData returns monthly aggregated PR metrics across all repos,
-// ordered oldest-first. Only months with at least one merged PR with size data
-// are included.
-func (d *DB) GlobalTimeSeriesData() ([]TimeSeriesPoint, error) {
+// GlobalTimeSeriesData returns monthly aggregated PR metrics across all repos.
+// cutoffPct trims high-outlier PRs by merge time; pass 1.0 for no trimming.
+func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
+		WITH cutoff AS (
+			SELECT COALESCE(
+				percentile_cont($1) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
+				9999999999.0
+			) AS p
+			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
+		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
@@ -1111,11 +1133,12 @@ func (d *DB) GlobalTimeSeriesData() ([]TimeSeriesPoint, error) {
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate
-		FROM pull_requests
+		FROM pull_requests, cutoff
 		WHERE merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
+		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
 		GROUP BY DATE_TRUNC('month', merged_at)
 		ORDER BY DATE_TRUNC('month', merged_at)
-	`)
+	`, cutoffPct)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,8 +1157,16 @@ func (d *DB) GlobalTimeSeriesData() ([]TimeSeriesPoint, error) {
 }
 
 // RepoTimeSeriesData returns monthly aggregated PR metrics for a single repo.
-func (d *DB) RepoTimeSeriesData(fullName string) ([]TimeSeriesPoint, error) {
+// cutoffPct trims high-outlier PRs by merge time; pass 1.0 for no trimming.
+func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
+		WITH cutoff AS (
+			SELECT COALESCE(
+				percentile_cont($2) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
+				9999999999.0
+			) AS p
+			FROM pull_requests WHERE repo_full_name=$1 AND merged=TRUE AND merge_time_secs > 0
+		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
@@ -1148,11 +1179,12 @@ func (d *DB) RepoTimeSeriesData(fullName string) ([]TimeSeriesPoint, error) {
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate
-		FROM pull_requests
+		FROM pull_requests, cutoff
 		WHERE repo_full_name=$1 AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
+		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
 		GROUP BY DATE_TRUNC('month', merged_at)
 		ORDER BY DATE_TRUNC('month', merged_at)
-	`, fullName)
+	`, fullName, cutoffPct)
 	if err != nil {
 		return nil, err
 	}
@@ -1171,9 +1203,18 @@ func (d *DB) RepoTimeSeriesData(fullName string) ([]TimeSeriesPoint, error) {
 }
 
 // OrgTimeSeriesData returns monthly aggregated PR metrics across all repos
-// belonging to an org (matched by owner or org_name on the repos table).
-func (d *DB) OrgTimeSeriesData(orgName string) ([]TimeSeriesPoint, error) {
+// belonging to an org. cutoffPct trims high-outlier PRs; pass 1.0 for no trimming.
+func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
+		WITH cutoff AS (
+			SELECT COALESCE(
+				percentile_cont($2) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
+				9999999999.0
+			) AS p
+			FROM pull_requests
+			WHERE repo_full_name IN (SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1)
+			  AND merged=TRUE AND merge_time_secs > 0
+		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
@@ -1186,12 +1227,13 @@ func (d *DB) OrgTimeSeriesData(orgName string) ([]TimeSeriesPoint, error) {
 				NULLIF(COUNT(*), 0),
 				0
 			) AS changes_requested_rate
-		FROM pull_requests
+		FROM pull_requests, cutoff
 		WHERE repo_full_name IN (SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1)
 		  AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
+		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
 		GROUP BY DATE_TRUNC('month', merged_at)
 		ORDER BY DATE_TRUNC('month', merged_at)
-	`, orgName)
+	`, orgName, cutoffPct)
 	if err != nil {
 		return nil, err
 	}

@@ -613,6 +613,16 @@ p  { margin: 0 0 0.5rem; }
 .bucket-tbl td:first-child { color: var(--fg); }
 .bucket-tbl td:last-child  { text-align: right; font-weight: 600; color: var(--fg); }
 
+/* Chart controls (range buttons + trim slider) */
+.chart-controls    { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; margin-bottom: 1rem; padding: 0.6rem 0.75rem; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: 6px; }
+.range-btns        { display: flex; gap: 0.35rem; }
+.range-btn         { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 0.2rem 0.55rem; font-size: 0.78rem; cursor: pointer; font-family: inherit; }
+.range-btn:hover   { color: var(--fg); border-color: var(--fg); }
+.range-btn.active  { background: var(--border); color: var(--fg); }
+.trim-ctrl         { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); flex: 1; min-width: 180px; }
+.trim-ctrl input   { flex: 1; accent-color: var(--link); }
+.trim-ctrl output  { min-width: 28px; color: var(--fg); }
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 640px) {
   body            { padding: 1rem 1rem 3rem; }

@@ -23,26 +23,59 @@
 
   {{if .TimeChartJSON}}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <div class="chart-controls">
+    <div class="range-btns" id="range-btns">
+      <button class="range-btn active" data-range="0"  onclick="ngmiSetRange(0)">All</button>
+      <button class="range-btn"        data-range="3"  onclick="ngmiSetRange(3)">3M</button>
+      <button class="range-btn"        data-range="6"  onclick="ngmiSetRange(6)">6M</button>
+      <button class="range-btn"        data-range="12" onclick="ngmiSetRange(12)">1Y</button>
+    </div>
+    <div class="trim-ctrl">
+      <span>Trim top</span>
+      <output id="trim-val">{{.Trim}}</output><span>% outliers</span>
+      <input type="range" name="trim" id="trim-slider" min="0" max="20" value="{{.Trim}}"
+        oninput="document.getElementById('trim-val').textContent=this.value"
+        hx-get="/org/{{.Org.Login}}"
+        hx-trigger="change"
+        hx-target="#charts-area"
+        hx-select="#charts-area"
+        hx-push-url="true">
+    </div>
+  </div>
+
+  <div id="charts-area">
   <section class="section">
     <h2 class="section-title">Trends Over Time</h2>
     <p class="chart-hint">Monthly aggregates across all repos in this org.</p>
-    <div class="charts-grid charts-grid-2">
+
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">PR size over time (lines changed)</div>
         <div class="chart-wrap"><canvas id="tc-size"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-size-aside"></div>
+    </div>
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Review time over time (hrs)</div>
         <div class="chart-wrap"><canvas id="tc-time"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-time-aside"></div>
+    </div>
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Changes requested rate over time (%)</div>
         <div class="chart-wrap"><canvas id="tc-crrate"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-crrate-aside"></div>
+    </div>
+    <div class="chart-row">
       <div class="chart-card">
         <div class="chart-label">Merged PRs per month</div>
         <div class="chart-wrap"><canvas id="tc-count"></canvas></div>
       </div>
+      <div class="chart-aside" id="tc-count-aside"></div>
     </div>
   </section>
   <script>
@@ -51,9 +84,7 @@
     if (!t.labels || !t.labels.length) return;
     var tickColor = '#848d97', gridColor = '#30363d';
     var baseX = { ticks: { color: tickColor, font: { size: 11 }, maxRotation: 45 }, grid: { color: gridColor } };
-    var baseY = function(cb) {
-      return { ticks: { color: tickColor, font: { size: 11 }, callback: cb || null }, grid: { color: gridColor }, beginAtZero: true };
-    };
+    var baseY = function(cb) { return { ticks: { color: tickColor, font: { size: 11 }, callback: cb || null }, grid: { color: gridColor }, beginAtZero: true }; };
     var lineOpts = {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: true, labels: { color: tickColor, font: { size: 11 }, boxWidth: 12 } } },
@@ -61,38 +92,50 @@
     };
     var noLegend = Object.assign({}, lineOpts, { plugins: Object.assign({}, lineOpts.plugins, { legend: { display: false } }) });
 
-    new Chart(document.getElementById('tc-size'), {
-      type: 'line',
-      data: { labels: t.labels, datasets: [
-        { label: 'Avg', data: t.avgSize, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
-        { label: 'Median', data: t.medianSize, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
-      ]},
-      options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY() } })
-    });
-    new Chart(document.getElementById('tc-time'), {
-      type: 'line',
-      data: { labels: t.labels, datasets: [
-        { label: 'Avg', data: t.avgHours, borderColor: '#d29922', backgroundColor: '#d2992215', borderWidth: 2, fill: false },
-        { label: 'Median', data: t.medianHours, borderColor: '#f0883e', backgroundColor: '#f0883e15', borderWidth: 2, fill: false }
-      ]},
-      options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY(function(v) { return v + 'h'; }) } })
-    });
-    new Chart(document.getElementById('tc-crrate'), {
-      type: 'line',
-      data: { labels: t.labels, datasets: [
-        { label: 'Changes requested rate', data: t.changesRequestedRate, borderColor: '#f85149', backgroundColor: '#f8514915', borderWidth: 2, fill: true }
-      ]},
-      options: Object.assign({}, noLegend, { scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } } })
-    });
-    new Chart(document.getElementById('tc-count'), {
-      type: 'line',
-      data: { labels: t.labels, datasets: [
-        { label: 'PRs merged', data: t.prCounts, borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true }
-      ]},
-      options: Object.assign({}, noLegend, { scales: { x: baseX, y: baseY() } })
-    });
+    var cSize   = new Chart(document.getElementById('tc-size'),   { type:'line', data:{ labels:t.labels, datasets:[{ label:'Avg', data:t.avgSize, borderColor:'#d29922', backgroundColor:'#d2992215', borderWidth:2, fill:false },{ label:'Median', data:t.medianSize, borderColor:'#f0883e', backgroundColor:'#f0883e15', borderWidth:2, fill:false }]}, options:Object.assign({},lineOpts,{scales:{x:baseX,y:baseY()}}) });
+    var cTime   = new Chart(document.getElementById('tc-time'),   { type:'line', data:{ labels:t.labels, datasets:[{ label:'Avg', data:t.avgHours, borderColor:'#d29922', backgroundColor:'#d2992215', borderWidth:2, fill:false },{ label:'Median', data:t.medianHours, borderColor:'#f0883e', backgroundColor:'#f0883e15', borderWidth:2, fill:false }]}, options:Object.assign({},lineOpts,{scales:{x:baseX,y:baseY(function(v){return v+'h';})}}) });
+    var cCRRate = new Chart(document.getElementById('tc-crrate'), { type:'line', data:{ labels:t.labels, datasets:[{ data:t.changesRequestedRate, borderColor:'#f85149', backgroundColor:'#f8514915', borderWidth:2, fill:true }]}, options:Object.assign({},noLegend,{scales:{x:baseX,y:{min:0,max:100,ticks:{color:tickColor,font:{size:11},callback:function(v){return v+'%';}},grid:{color:gridColor}}}}) });
+    var cCount  = new Chart(document.getElementById('tc-count'),  { type:'line', data:{ labels:t.labels, datasets:[{ data:t.prCounts, borderColor:'#58a6ff', backgroundColor:'#58a6ff15', borderWidth:2, fill:true }]}, options:Object.assign({},noLegend,{scales:{x:baseX,y:baseY()}}) });
+
+    var allCharts = [cSize, cTime, cCRRate, cCount];
+    var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts]];
+
+    window.ngmiSetRange = function(n) {
+      window._ngmiRange = n;
+      var start = n > 0 ? Math.max(0, t.labels.length - n) : 0;
+      allCharts.forEach(function(c, ci) {
+        c.data.labels = t.labels.slice(start);
+        allSeries[ci].forEach(function(s, di) { c.data.datasets[di].data = s.slice(start); });
+        c.update();
+      });
+      document.querySelectorAll('.range-btn').forEach(function(btn) {
+        btn.classList.toggle('active', parseInt(btn.dataset.range) === n);
+      });
+    };
+    if (window._ngmiRange) window.ngmiSetRange(window._ngmiRange);
+
+    var n = t.labels.length, first = t.labels[0], latest = t.labels[n-1];
+    function statCard(num, lbl) {
+      var d = document.createElement('div'); d.className = 'chart-stat';
+      var s1 = document.createElement('span'); s1.className = 'chart-stat-num'; s1.textContent = num;
+      var s2 = document.createElement('span'); s2.className = 'chart-stat-label'; s2.textContent = lbl;
+      d.appendChild(s1); d.appendChild(s2); return d;
+    }
+    function trendCard(fv, lv, fn) {
+      if (!fv || fv === 0) return null;
+      var pct = Math.round((lv - fv) / fv * 100);
+      var c = pct > 0 ? '#f85149' : (pct < 0 ? '#3fb950' : '#848d97');
+      return statCard((pct > 0 ? '▲ ' : pct < 0 ? '▼ ' : '→ ') + Math.abs(pct) + '% since ' + fn, 'vs ' + fn);
+    }
+    function fill(id, cards) { var el = document.getElementById(id); cards.forEach(function(c){if(c)el.appendChild(c);}); }
+
+    fill('tc-size-aside',   [statCard(Math.round(t.avgSize[n-1])+' lines','Avg size, '+latest), statCard(Math.round(t.medianSize[n-1])+' lines','Median size, '+latest), trendCard(t.avgSize[0],t.avgSize[n-1],first)]);
+    fill('tc-time-aside',   [statCard(t.avgHours[n-1]+'h','Avg time, '+latest), statCard(t.medianHours[n-1]+'h','Median time, '+latest), trendCard(t.avgHours[0],t.avgHours[n-1],first)]);
+    fill('tc-crrate-aside', [statCard(t.changesRequestedRate[n-1]+'%','Rate, '+latest), statCard(t.changesRequestedRate[0]+'%','Rate, '+first), trendCard(t.changesRequestedRate[0],t.changesRequestedRate[n-1],first)]);
+    fill('tc-count-aside',  [statCard(t.prCounts[n-1]+' PRs','Merged, '+latest), statCard(Math.max.apply(null,t.prCounts)+' PRs','Peak month')]);
   })();
   </script>
+  </div>{{/* end #charts-area */}}
   {{end}}
 
   <!-- ── In-org leaderboards ── -->

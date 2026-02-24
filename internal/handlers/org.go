@@ -20,6 +20,7 @@ type OrgData struct {
 	TotalReviews    int
 	IsSyncing       bool
 	TimeChartJSON   template.JS
+	Trim            int
 	OGTitle         string
 	OGDesc          string
 	OGUrl           string
@@ -27,6 +28,8 @@ type OrgData struct {
 
 func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	orgName := chi.URLParam(r, "org")
+
+	trim, cutoffPct := parseTrim(r)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -102,11 +105,12 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 		Repos:          repos,
 		TotalMergedPRs: totalPRs,
 		IsSyncing:      isSyncing,
+		Trim:           trim,
 	}
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)
 
-	if points, err := h.db.OrgTimeSeriesData(orgName); err == nil && len(points) > 0 {
+	if points, err := h.db.OrgTimeSeriesData(orgName, cutoffPct); err == nil && len(points) > 0 {
 		tp := timeChartPayload{}
 		for _, p := range points {
 			tp.Labels = append(tp.Labels, p.Label)

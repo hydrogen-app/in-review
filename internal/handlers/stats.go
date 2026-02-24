@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strconv"
 
 	"inreview/internal/db"
 )
@@ -13,6 +14,7 @@ type StatsData struct {
 	Overall       db.GlobalOverallStats
 	SizeChartJSON template.JS
 	TimeChartJSON template.JS
+	Trim          int
 	OGTitle       string
 	OGDesc        string
 	OGUrl         string
@@ -40,13 +42,25 @@ type timeChartPayload struct {
 	ChangesRequestedRate []float64 `json:"changesRequestedRate"`
 }
 
+func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
+	trim, _ = strconv.Atoi(r.URL.Query().Get("trim"))
+	if trim < 0 || trim > 20 {
+		trim = 0
+	}
+	cutoffPct = 1.0 - float64(trim)/100.0
+	return
+}
+
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	trim, cutoffPct := parseTrim(r)
+
 	overall, _ := h.db.GlobalOverallStats()
-	buckets, _ := h.db.GlobalSizeChartData()
-	points, _ := h.db.GlobalTimeSeriesData()
+	buckets, _ := h.db.GlobalSizeChartData(cutoffPct)
+	points, _ := h.db.GlobalTimeSeriesData(cutoffPct)
 
 	data := StatsData{
 		Overall: overall,
+		Trim:    trim,
 		OGTitle: "Global PR Stats — ngmi",
 		OGDesc:  "How PR size affects review time and changes requested, across all repos tracked on ngmi.",
 		OGUrl:   "https://ngmi.review/stats",

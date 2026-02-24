@@ -22,6 +22,7 @@ type RepoData struct {
 	OwnerUser     *db.User
 	SizeChartJSON template.JS
 	TimeChartJSON template.JS
+	Trim          int
 	OGTitle       string
 	OGDesc        string
 	OGUrl         string
@@ -40,6 +41,8 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	name := chi.URLParam(r, "name")
 	fullName := owner + "/" + name
+
+	trim, cutoffPct := parseTrim(r)
 
 	// Ensure repo is in DB
 	repo, _ := h.db.GetRepo(fullName)
@@ -84,6 +87,7 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	data := RepoData{
 		Repo:      repo,
 		IsSyncing: h.worker.IsSyncing(fullName),
+		Trim:      trim,
 	}
 
 	data.TopReviewers, _ = h.db.RepoTopReviewers(fullName, 10)
@@ -91,7 +95,7 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 	data.SpeedRank, _ = h.db.RepoSpeedRank(fullName)
 	data.OwnerUser, _ = h.db.GetUser(owner)
 
-	if buckets, err := h.db.RepoSizeChartData(fullName); err == nil && len(buckets) > 0 {
+	if buckets, err := h.db.RepoSizeChartData(fullName, cutoffPct); err == nil && len(buckets) > 0 {
 		payload := sizeChartPayload{}
 		for _, b := range buckets {
 			payload.Labels = append(payload.Labels, b.Label)
@@ -104,7 +108,7 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if points, err := h.db.RepoTimeSeriesData(fullName); err == nil && len(points) > 0 {
+	if points, err := h.db.RepoTimeSeriesData(fullName, cutoffPct); err == nil && len(points) > 0 {
 		tp := timeChartPayload{}
 		for _, p := range points {
 			tp.Labels = append(tp.Labels, p.Label)
