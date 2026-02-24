@@ -441,13 +441,17 @@ func (d *DB) queryEntries(query string, limit int) ([]LeaderboardEntry, error) {
 		return nil, fmt.Errorf("queryEntries: %w", err)
 	}
 	defer rows.Close()
+	return scanLeaderboardEntries(rows)
+}
+
+func scanLeaderboardEntries(rows *sql.Rows) ([]LeaderboardEntry, error) {
 	var entries []LeaderboardEntry
 	rank := 1
 	for rows.Next() {
 		var e LeaderboardEntry
 		var val int64
 		if err := rows.Scan(&e.Name, &val, &e.Extra); err != nil {
-			log.Printf("db: queryEntries scan error (rank %d): %v", rank, err)
+			log.Printf("db: scanLeaderboardEntries scan error (rank %d): %v", rank, err)
 			continue
 		}
 		e.Value = val
@@ -534,7 +538,7 @@ func (d *DB) UserAuthorStats(login string) (*AuthorStats, error) {
 	err := d.conn.QueryRow(`
 		SELECT COUNT(*),
 		       SUM(CASE WHEN merged=TRUE THEN 1 ELSE 0 END),
-		       COALESCE(AVG(CASE WHEN merged=TRUE THEN merge_time_secs END), 0)
+		       COALESCE(AVG(CASE WHEN merged=TRUE THEN merge_time_secs END)::BIGINT, 0)
 		FROM pull_requests
 		WHERE author_login=$1
 	`, login).Scan(&s.TotalPRs, &s.MergedPRs, &s.AvgMergeTimeSecs)
@@ -616,7 +620,7 @@ func (d *DB) OrgRepos(orgName string) ([]Repo, error) {
 }
 
 func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEntry, error) {
-	return d.queryEntries(`
+	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
@@ -624,11 +628,16 @@ func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEnt
 		WHERE repo.org_name=$1
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT $2`, limit)
+		LIMIT $2`, orgName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLeaderboardEntries(rows)
 }
 
 func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardEntry, error) {
-	return d.queryEntries(`
+	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
 		JOIN repos repo ON repo.full_name=r.repo_full_name
@@ -636,7 +645,12 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 		WHERE repo.org_name=$1 AND r.state='CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
 		ORDER BY cnt DESC
-		LIMIT $2`, limit)
+		LIMIT $2`, orgName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanLeaderboardEntries(rows)
 }
 
 // ── Global stats ───────────────────────────────────────────────────────────────
