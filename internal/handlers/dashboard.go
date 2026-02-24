@@ -113,6 +113,9 @@ func (h *Handler) AddRepo(w http.ResponseWriter, r *http.Request) {
 		OrgName:    owner,
 		SyncStatus: "pending",
 	})
+	if err := h.db.TrackRepoForUser(login, fullName); err != nil {
+		log.Printf("dashboard: track repo for user %s: %v", login, err)
+	}
 	h.worker.Queue(fullName, true)
 	log.Printf("dashboard: %s queued %s for sync", login, fullName)
 

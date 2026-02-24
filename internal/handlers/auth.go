@@ -172,6 +172,9 @@ func (h *Handler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
 				Login string `json:"login"`
 			} `json:"account"`
 		} `json:"installation"`
+		Sender struct {
+			Login string `json:"login"`
+		} `json:"sender"`
 	}
 
 	if err := jsonDecode(r, &payload); err != nil {
@@ -181,8 +184,16 @@ func (h *Handler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
 
 	switch payload.Action {
 	case "created":
+		// Store under the account login (org or user).
 		if err := h.db.UpsertInstallation(payload.Installation.ID, payload.Installation.Account.Login); err != nil {
 			log.Printf("webhook: upsert installation %d: %v", payload.Installation.ID, err)
+		}
+		// If installed by a different user (e.g. user installing on an org),
+		// also store under the sender's login so their dashboard can find it.
+		if payload.Sender.Login != "" && payload.Sender.Login != payload.Installation.Account.Login {
+			if err := h.db.UpsertInstallationForUser(payload.Installation.ID, payload.Sender.Login); err != nil {
+				log.Printf("webhook: link installation %d to sender %s: %v", payload.Installation.ID, payload.Sender.Login, err)
+			}
 		}
 	case "deleted":
 		if err := h.db.DeactivateInstallation(payload.Installation.ID); err != nil {

@@ -220,6 +220,17 @@ func (d *DB) migrate() error {
 			created_at      TIMESTAMPTZ DEFAULT NOW(),
 			expires_at      TIMESTAMPTZ NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS user_tracked_repos (
+			github_login   TEXT        NOT NULL,
+			repo_full_name TEXT        NOT NULL,
+			tracked_at     TIMESTAMPTZ DEFAULT NOW(),
+			PRIMARY KEY (github_login, repo_full_name)
+		)`,
+		`CREATE TABLE IF NOT EXISTS user_installations (
+			github_login    TEXT   NOT NULL,
+			installation_id BIGINT NOT NULL,
+			PRIMARY KEY (github_login, installation_id)
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -1667,13 +1678,27 @@ func (d *DB) DeactivateInstallation(installationID int64) error {
 	return err
 }
 
-// GetInstallationByLogin returns the active installation ID for a GitHub login, if any.
+// GetInstallationByLogin returns the active installation ID for a GitHub login.
+// Checks both app_installations (direct installs) and user_installations (org installs
+// where the user was the sender but the account is an org).
 func (d *DB) GetInstallationByLogin(login string) (*int64, error) {
 	var id int64
 	err := d.conn.QueryRow(`
 		SELECT installation_id FROM app_installations
 		WHERE github_login=$1 AND uninstalled_at IS NULL
 		ORDER BY installed_at DESC LIMIT 1
+	`, login).Scan(&id)
+	if err == nil {
+		return &id, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+	// Fall back to user_installations (org installs linked to this user).
+	err = d.conn.QueryRow(`
+		SELECT installation_id FROM user_installations
+		WHERE github_login=$1
+		LIMIT 1
 	`, login).Scan(&id)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1684,6 +1709,18 @@ func (d *DB) GetInstallationByLogin(login string) (*int64, error) {
 	return &id, nil
 }
 
+// UpsertInstallationForUser links an installation to a user in user_installations.
+// Used when a user installs the app on an org — we link the org's installation
+// to the installing user so their dashboard can discover it.
+func (d *DB) UpsertInstallationForUser(installationID int64, login string) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO user_installations (github_login, installation_id)
+		VALUES ($1, $2)
+		ON CONFLICT (github_login, installation_id) DO NOTHING
+	`, login, installationID)
+	return err
+}
+
 // LinkSessionInstallation updates the installation_id on an existing session.
 func (d *DB) LinkSessionInstallation(sessionID string, installationID int64) error {
 	_, err := d.conn.Exec(`
@@ -1692,8 +1729,19 @@ func (d *DB) LinkSessionInstallation(sessionID string, installationID int64) err
 	return err
 }
 
-// UserOwnedTrackedRepos returns repos whose owner matches the given login and
-// that have been synced (sync_status = 'done').
+// TrackRepoForUser records that a user has explicitly chosen to track a repo,
+// regardless of whether they own it (supports org repos).
+func (d *DB) TrackRepoForUser(login, repoFullName string) error {
+	_, err := d.conn.Exec(`
+		INSERT INTO user_tracked_repos (github_login, repo_full_name)
+		VALUES ($1, $2)
+		ON CONFLICT (github_login, repo_full_name) DO NOTHING
+	`, login, repoFullName)
+	return err
+}
+
+// UserOwnedTrackedRepos returns repos the user has tracked — either repos they
+// own/belong to by org, or repos they explicitly added via TrackRepoForUser.
 func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
@@ -1701,6 +1749,9 @@ func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
 		FROM repos
 		WHERE (owner = $1 OR org_name = $1)
+		   OR full_name IN (
+		       SELECT repo_full_name FROM user_tracked_repos WHERE github_login = $1
+		   )
 		ORDER BY merged_pr_count DESC
 		LIMIT 50
 	`, login)
