@@ -30,6 +30,11 @@ func jsonDecode(r *http.Request, v interface{}) error {
 // callback when "Request user authorization (OAuth) during installation" is
 // enabled on the App.
 func (h *Handler) AuthGitHub(w http.ResponseWriter, r *http.Request) {
+	// If the user already has a valid session, skip the OAuth flow entirely.
+	if currentUser(r) != "" {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		return
+	}
 	if h.cfg.GitHubAppSlug == "" {
 		h.renderErrorReq(w, r, http.StatusServiceUnavailable,
 			"Auth Unavailable", "GitHub App is not configured (GITHUB_APP_SLUG missing).")
