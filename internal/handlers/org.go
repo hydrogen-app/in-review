@@ -37,26 +37,33 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 
 	ghUser, err := h.gh.GetUser(ctx, orgName)
 	if err != nil {
-		h.renderError(w, http.StatusNotFound, "Org Not Found",
-			"Could not find the organization "+orgName+" on GitHub. Check the spelling and try again.")
-		return
+		// If the org is cached in the DB, serve from there instead of erroring.
+		if cached, dbErr := h.db.GetUser(orgName); dbErr == nil && cached != nil && cached.IsOrg {
+			// Fall through with ghUser = nil
+		} else {
+			h.renderGHError(w, r, err, "Org Not Found",
+				"Could not find the organization "+orgName+" on GitHub. Check the spelling and try again.")
+			return
+		}
 	}
 
-	// If it's actually a user, redirect
-	if ghUser.Type != "Organization" {
+	// Redirect if it's actually a user (only when we have fresh GitHub data).
+	if ghUser != nil && ghUser.Type != "Organization" {
 		http.Redirect(w, r, "/user/"+orgName, http.StatusFound)
 		return
 	}
 
-	h.db.UpsertUser(db.User{
-		Login:       ghUser.Login,
-		Name:        ghUser.Name,
-		AvatarURL:   ghUser.AvatarURL,
-		Bio:         ghUser.Bio,
-		PublicRepos: ghUser.PublicRepos,
-		Followers:   ghUser.Followers,
-		IsOrg:       true,
-	})
+	if ghUser != nil {
+		h.db.UpsertUser(db.User{
+			Login:       ghUser.Login,
+			Name:        ghUser.Name,
+			AvatarURL:   ghUser.AvatarURL,
+			Bio:         ghUser.Bio,
+			PublicRepos: ghUser.PublicRepos,
+			Followers:   ghUser.Followers,
+			IsOrg:       true,
+		})
+	}
 
 	// Queue top org repos for sync
 	go func() {
@@ -80,13 +87,16 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	org, _ := h.db.GetUser(orgName)
-	if org == nil {
+	if org == nil && ghUser != nil {
 		org = &db.User{
 			Login:     ghUser.Login,
 			Name:      ghUser.Name,
 			AvatarURL: ghUser.AvatarURL,
 			IsOrg:     true,
 		}
+	}
+	if org == nil {
+		org = &db.User{Login: orgName, IsOrg: true}
 	}
 
 	repos, _ := h.db.OrgRepos(orgName)

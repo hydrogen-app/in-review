@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -187,6 +188,30 @@ func (h *Handler) renderErrorReq(w http.ResponseWriter, r *http.Request, code in
 	}); err != nil {
 		log.Printf("error template error: %v", err)
 	}
+}
+
+// renderGHError translates a GitHub client error into an appropriate page.
+// Returns true if it rendered a response (caller should return immediately).
+// notFoundTitle/Msg are shown only for ErrNotFound; rate-limit and other
+// errors get their own messages regardless of what the caller passes.
+func (h *Handler) renderGHError(w http.ResponseWriter, r *http.Request, err error, notFoundTitle, notFoundMsg string) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, github.ErrRateLimited):
+		h.renderErrorReq(w, r, http.StatusTooManyRequests,
+			"GitHub Rate Limit Reached",
+			"The GitHub API hourly rate limit has been hit. Cached data is still available on pages already synced. Try again in a few minutes.")
+	case errors.Is(err, github.ErrNotFound):
+		h.renderErrorReq(w, r, http.StatusNotFound, notFoundTitle, notFoundMsg)
+	default:
+		log.Printf("github error: %v", err)
+		h.renderErrorReq(w, r, http.StatusBadGateway,
+			"GitHub Unavailable",
+			"Couldn't reach GitHub right now. Try again in a moment.")
+	}
+	return true
 }
 
 // render executes the full layout template for a page.

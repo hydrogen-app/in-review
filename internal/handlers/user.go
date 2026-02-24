@@ -37,39 +37,49 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 
 	ghUser, err := h.gh.GetUser(ctx, username)
 	if err != nil {
-		h.renderError(w, http.StatusNotFound, "User Not Found",
-			"Could not find @"+username+" on GitHub. Check the spelling and try again.")
-		return
+		// If we have the user cached in the DB, render from that instead of erroring.
+		if cached, dbErr := h.db.GetUser(username); dbErr == nil && cached != nil {
+			// Serve cached page — fall through with ghUser = nil
+		} else {
+			h.renderGHError(w, r, err, "User Not Found",
+				"Could not find @"+username+" on GitHub. Check the spelling and try again.")
+			return
+		}
 	}
 
-	isOrg := ghUser.Type == "Organization"
-
-	// If it's an org, redirect to the org page
-	if isOrg {
+	// Determine if org and redirect early (only when we have fresh GitHub data).
+	if ghUser != nil && ghUser.Type == "Organization" {
 		http.Redirect(w, r, "/org/"+username, http.StatusFound)
 		return
 	}
 
-	// Cache user
-	h.db.UpsertUser(db.User{
-		Login:       ghUser.Login,
-		Name:        ghUser.Name,
-		AvatarURL:   ghUser.AvatarURL,
-		Bio:         ghUser.Bio,
-		PublicRepos: ghUser.PublicRepos,
-		Followers:   ghUser.Followers,
-		Company:     ghUser.Company,
-		Location:    ghUser.Location,
-		IsOrg:       false,
-	})
+	// Cache user if we got fresh data.
+	if ghUser != nil {
+		h.db.UpsertUser(db.User{
+			Login:       ghUser.Login,
+			Name:        ghUser.Name,
+			AvatarURL:   ghUser.AvatarURL,
+			Bio:         ghUser.Bio,
+			PublicRepos: ghUser.PublicRepos,
+			Followers:   ghUser.Followers,
+			Company:     ghUser.Company,
+			Location:    ghUser.Location,
+			IsOrg:       false,
+		})
+	}
 
 	user, _ := h.db.GetUser(username)
-	if user == nil {
+	if user == nil && ghUser != nil {
 		user = &db.User{
 			Login:     ghUser.Login,
 			Name:      ghUser.Name,
 			AvatarURL: ghUser.AvatarURL,
 		}
+	}
+	if user == nil {
+		h.renderGHError(w, r, err, "User Not Found",
+			"Could not find @"+username+" on GitHub. Check the spelling and try again.")
+		return
 	}
 
 	// Queue top owned repos + repos where they've reviewed PRs for sync.

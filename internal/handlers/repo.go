@@ -51,9 +51,8 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		ghRepo, err := h.gh.GetRepo(ctx, owner, name)
-		if err != nil {
-			h.renderError(w, http.StatusNotFound, "Repo Not Found",
-				"Could not find "+fullName+" on GitHub. Check the spelling and try again.")
+		if h.renderGHError(w, r, err, "Repo Not Found",
+			"Could not find "+fullName+" on GitHub. Check the spelling and try again.") {
 			return
 		}
 		// UpsertRepo may lose a race with the worker inserting the same repo;

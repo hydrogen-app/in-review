@@ -13,12 +13,16 @@ import (
 // DashboardData is passed to the dashboard template.
 type DashboardData struct {
 	BaseData
-	Login         string
-	AvatarURL     string
-	TrackedRepos  []db.Repo
+	Login          string
+	AvatarURL      string
+	TrackedRepos   []db.Repo
 	AvailableRepos []string // full_names from GitHub installation, not yet tracked
-	HasInstall    bool
-	InstallURL    string
+	HasInstall     bool
+	InstallURL     string
+	// Required by layout.html
+	OGTitle string
+	OGDesc  string
+	OGUrl   string
 }
 
 // Dashboard shows the user's connected repos and allows tracking/untracking.
@@ -46,7 +50,15 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 	if instID != 0 {
 		data.HasInstall = true
-		// Generate an installation token to call GitHub API.
+
+		// Load repos already synced for this user's installation first,
+		// so we can correctly identify which GitHub repos are not yet tracked.
+		if repos, err := h.db.UserOwnedTrackedRepos(login); err == nil {
+			data.TrackedRepos = repos
+		}
+
+		// Fetch the list of repos accessible via the GitHub App installation
+		// and show any that aren't tracked yet.
 		if h.cfg.GitHubAppID != 0 && h.cfg.GitHubAppPrivateKey != "" {
 			key, err := auth.ParsePrivateKey(h.cfg.GitHubAppPrivateKey)
 			if err != nil {
@@ -60,12 +72,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						log.Printf("dashboard: get installation token: %v", err)
 					} else {
-						// List repos accessible via the installation.
 						repoNames, err := auth.ListInstallationRepos(token)
 						if err != nil {
 							log.Printf("dashboard: list installation repos: %v", err)
 						} else {
-							// Separate repos already tracked in our DB vs new ones.
 							tracked := make(map[string]bool)
 							for _, rp := range data.TrackedRepos {
 								tracked[rp.FullName] = true
@@ -79,15 +89,6 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-		}
-
-		// Load repos already synced for this user's installation.
-		// We identify them by repos whose owner matches the installation owner.
-		// This is a lightweight heuristic; a proper `installation_repos` join
-		// table would be the production approach.
-		instLogin := login
-		if repos, err := h.db.UserOwnedTrackedRepos(instLogin); err == nil {
-			data.TrackedRepos = repos
 		}
 	}
 
