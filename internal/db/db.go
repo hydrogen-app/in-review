@@ -1109,6 +1109,9 @@ type TimeSeriesPoint struct {
 	AvgSecs              float64
 	MedianSecs           float64
 	ChangesRequestedRate float64
+	AvgFirstReviewSecs   float64
+	MedFirstReviewSecs   float64
+	UnreviewedRate       float64
 }
 
 // GlobalTimeSeriesData returns monthly aggregated PR metrics across all repos.
@@ -1119,26 +1122,46 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) 
 			SELECT COALESCE(
 				percentile_cont($1) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
 				9999999999.0
-			) AS p
+			) AS cutoff_val
 			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
+		),
+		first_review AS (
+			SELECT repo_full_name, pr_number,
+			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
+			FROM reviews
+			GROUP BY repo_full_name, pr_number
 		)
 		SELECT
-			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
-			COALESCE(AVG(additions + deletions)::FLOAT, 0) AS avg_size,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (additions + deletions)::FLOAT), 0) AS median_size,
-			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(AVG(pr.additions + pr.deletions)::FLOAT, 0) AS avg_size,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (pr.additions + pr.deletions)::FLOAT), 0) AS median_size,
+			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs,
 			COALESCE(
-				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				100.0 * SUM(CASE WHEN pr.changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS changes_requested_rate
-		FROM pull_requests, cutoff
-		WHERE merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
-		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
-		GROUP BY DATE_TRUNC('month', merged_at)
-		ORDER BY DATE_TRUNC('month', merged_at)
+			) AS changes_requested_rate,
+			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS avg_first_review_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
+				CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS median_first_review_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS unreviewed_rate
+		FROM pull_requests pr
+		CROSS JOIN cutoff
+		LEFT JOIN first_review fr ON fr.repo_full_name = pr.repo_full_name AND fr.pr_number = pr.number
+		WHERE pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
+		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
+		GROUP BY DATE_TRUNC('month', pr.merged_at)
+		ORDER BY DATE_TRUNC('month', pr.merged_at)
 	`, cutoffPct)
 	if err != nil {
 		return nil, err
@@ -1149,7 +1172,8 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64) ([]TimeSeriesPoint, error) 
 	for rows.Next() {
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
-			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate); err != nil {
+			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
 			continue
 		}
 		out = append(out, p)
@@ -1165,26 +1189,47 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 			SELECT COALESCE(
 				percentile_cont($2) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
 				9999999999.0
-			) AS p
+			) AS cutoff_val
 			FROM pull_requests WHERE repo_full_name=$1 AND merged=TRUE AND merge_time_secs > 0
+		),
+		first_review AS (
+			SELECT pr_number,
+			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
+			FROM reviews
+			WHERE repo_full_name=$1
+			GROUP BY pr_number
 		)
 		SELECT
-			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
-			COALESCE(AVG(additions + deletions)::FLOAT, 0) AS avg_size,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (additions + deletions)::FLOAT), 0) AS median_size,
-			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(AVG(pr.additions + pr.deletions)::FLOAT, 0) AS avg_size,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (pr.additions + pr.deletions)::FLOAT), 0) AS median_size,
+			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs,
 			COALESCE(
-				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				100.0 * SUM(CASE WHEN pr.changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS changes_requested_rate
-		FROM pull_requests, cutoff
-		WHERE repo_full_name=$1 AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
-		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
-		GROUP BY DATE_TRUNC('month', merged_at)
-		ORDER BY DATE_TRUNC('month', merged_at)
+			) AS changes_requested_rate,
+			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS avg_first_review_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
+				CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS median_first_review_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS unreviewed_rate
+		FROM pull_requests pr
+		CROSS JOIN cutoff
+		LEFT JOIN first_review fr ON fr.pr_number = pr.number
+		WHERE pr.repo_full_name=$1 AND pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
+		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
+		GROUP BY DATE_TRUNC('month', pr.merged_at)
+		ORDER BY DATE_TRUNC('month', pr.merged_at)
 	`, fullName, cutoffPct)
 	if err != nil {
 		return nil, err
@@ -1195,7 +1240,8 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 	for rows.Next() {
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
-			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate); err != nil {
+			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
 			continue
 		}
 		out = append(out, p)
@@ -1207,33 +1253,57 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 // belonging to an org. cutoffPct trims high-outlier PRs; pass 1.0 for no trimming.
 func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
-		WITH cutoff AS (
+		WITH org_repos AS (
+			SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1
+		),
+		cutoff AS (
 			SELECT COALESCE(
 				percentile_cont($2) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT),
 				9999999999.0
-			) AS p
+			) AS cutoff_val
 			FROM pull_requests
-			WHERE repo_full_name IN (SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1)
+			WHERE repo_full_name IN (SELECT full_name FROM org_repos)
 			  AND merged=TRUE AND merge_time_secs > 0
+		),
+		first_review AS (
+			SELECT repo_full_name, pr_number,
+			       MIN(EXTRACT(EPOCH FROM submitted_at)) AS epoch
+			FROM reviews
+			WHERE repo_full_name IN (SELECT full_name FROM org_repos)
+			GROUP BY repo_full_name, pr_number
 		)
 		SELECT
-			TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count,
-			COALESCE(AVG(additions + deletions)::FLOAT, 0) AS avg_size,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (additions + deletions)::FLOAT), 0) AS median_size,
-			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
-			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY merge_time_secs::FLOAT), 0) AS median_secs,
+			COALESCE(AVG(pr.additions + pr.deletions)::FLOAT, 0) AS avg_size,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY (pr.additions + pr.deletions)::FLOAT), 0) AS median_size,
+			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs,
 			COALESCE(
-				100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+				100.0 * SUM(CASE WHEN pr.changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS changes_requested_rate
-		FROM pull_requests, cutoff
-		WHERE repo_full_name IN (SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1)
-		  AND merged=TRUE AND merged_at IS NOT NULL AND (additions + deletions) > 0
-		  AND (merge_time_secs IS NULL OR merge_time_secs::FLOAT <= p)
-		GROUP BY DATE_TRUNC('month', merged_at)
-		ORDER BY DATE_TRUNC('month', merged_at)
+			) AS changes_requested_rate,
+			COALESCE(AVG(CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS avg_first_review_secs,
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
+				CASE WHEN fr.epoch IS NOT NULL
+				THEN GREATEST(0, fr.epoch - EXTRACT(EPOCH FROM pr.opened_at))
+				ELSE NULL END), 0) AS median_first_review_secs,
+			COALESCE(
+				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(COUNT(*), 0),
+				0
+			) AS unreviewed_rate
+		FROM pull_requests pr
+		CROSS JOIN cutoff
+		LEFT JOIN first_review fr ON fr.repo_full_name = pr.repo_full_name AND fr.pr_number = pr.number
+		WHERE pr.repo_full_name IN (SELECT full_name FROM org_repos)
+		  AND pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
+		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
+		GROUP BY DATE_TRUNC('month', pr.merged_at)
+		ORDER BY DATE_TRUNC('month', pr.merged_at)
 	`, orgName, cutoffPct)
 	if err != nil {
 		return nil, err
@@ -1244,7 +1314,8 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 	for rows.Next() {
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
-			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate); err != nil {
+			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
 			continue
 		}
 		out = append(out, p)

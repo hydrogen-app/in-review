@@ -42,6 +42,9 @@ type timeChartPayload struct {
 	AvgHours             []float64 `json:"avgHours"`
 	MedianHours          []float64 `json:"medianHours"`
 	ChangesRequestedRate []float64 `json:"changesRequestedRate"`
+	AvgFirstReviewHours  []float64 `json:"avgFirstReviewHours"`
+	MedFirstReviewHours  []float64 `json:"medFirstReviewHours"`
+	UnreviewedMergeRate  []float64 `json:"unreviewedMergeRate"`
 }
 
 func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
@@ -57,7 +60,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	trim, cutoffPct := parseTrim(r)
 
 	// ── Cache check ────────────────────────────────────────────────
-	cacheKey := fmt.Sprintf("stats:v1:%d", trim)
+	cacheKey := fmt.Sprintf("stats:v2:%d", trim)
 	if h.cache != nil {
 		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
 			var data StatsData
@@ -137,6 +140,9 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 			tp.AvgHours = append(tp.AvgHours, roundTo1(p.AvgSecs/3600))
 			tp.MedianHours = append(tp.MedianHours, roundTo1(p.MedianSecs/3600))
 			tp.ChangesRequestedRate = append(tp.ChangesRequestedRate, roundTo1(p.ChangesRequestedRate))
+			tp.AvgFirstReviewHours = append(tp.AvgFirstReviewHours, roundTo1(p.AvgFirstReviewSecs/3600))
+			tp.MedFirstReviewHours = append(tp.MedFirstReviewHours, roundTo1(p.MedFirstReviewSecs/3600))
+			tp.UnreviewedMergeRate = append(tp.UnreviewedMergeRate, roundTo1(p.UnreviewedRate))
 		}
 		if raw, err := json.Marshal(tp); err == nil {
 			data.TimeChartJSON = template.JS(raw)
