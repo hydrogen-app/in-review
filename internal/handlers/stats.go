@@ -74,7 +74,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Cache check ────────────────────────────────────────────────
-	cacheKey := fmt.Sprintf("stats:v3:%d:%d:%d", trim, minStars, minContribs)
+	cacheKey := fmt.Sprintf("stats:v4:%d:%d:%d", trim, minStars, minContribs)
 	if h.cache != nil {
 		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
 			var data StatsData
