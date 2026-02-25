@@ -69,6 +69,9 @@ func setPagination(d *DataExplorerData, baseURL string, total, page, offset int,
 
 func (h *Handler) DataExplorer(w http.ResponseWriter, r *http.Request) {
 	page, offset, search, sortBy, status, _, _, _, _ := parseDataQuery(r)
+	if status == "" {
+		status = "done" // default to showing only synced repos on initial load
+	}
 	repos, total, _ := h.db.ListReposFiltered(dataLimit, offset, sortBy, search, status)
 
 	extra := ""

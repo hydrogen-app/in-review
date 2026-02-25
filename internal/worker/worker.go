@@ -97,11 +97,49 @@ func (w *Worker) installationClient(ctx context.Context, ownerLogin string) *git
 	return w.gh.WithToken(token)
 }
 
-// Start launches background sync goroutines.
+// Start launches background sync goroutines and the pending-repo sweeper.
 func (w *Worker) Start() {
 	for i := 0; i < workerCount; i++ {
 		go w.run()
 	}
+	go w.sweepLoop()
+}
+
+// sweepLoop periodically picks up repos stuck in 'pending' status and queues them.
+// This handles the case where pending repos lost their Redis queue entry after a restart.
+const (
+	sweepInterval  = 5 * time.Minute
+	sweepBatch     = 50            // repos to queue per sweep tick
+	errorCooldown  = 1 * time.Hour // minimum wait before retrying an errored repo
+)
+
+func (w *Worker) sweepLoop() {
+	// Initial sweep after a short delay to let workers warm up.
+	time.Sleep(30 * time.Second)
+	w.sweep()
+
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		w.sweep()
+	}
+}
+
+func (w *Worker) sweep() {
+	repos, err := w.db.UnsyncedRepos(sweepBatch, errorCooldown)
+	if err != nil {
+		log.Printf("[sweep] db error: %v", err)
+		return
+	}
+	if len(repos) == 0 {
+		return
+	}
+	queued := 0
+	for _, fullName := range repos {
+		w.Queue(fullName, false)
+		queued++
+	}
+	log.Printf("[sweep] queued %d repos (pending or retryable errors)", queued)
 }
 
 func (w *Worker) run() {

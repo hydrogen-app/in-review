@@ -1994,6 +1994,33 @@ func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
 	return scanRepos(rows)
 }
 
+// UnsyncedRepos returns up to limit repo full_names that need syncing:
+// - sync_status = 'pending' (never attempted), OR
+// - sync_status = 'error'   AND last updated more than errorCooldown ago (retry after backoff).
+// Ordered oldest-first so the backlog drains in FIFO order.
+func (d *DB) UnsyncedRepos(limit int, errorCooldown time.Duration) ([]string, error) {
+	rows, err := d.conn.Query(`
+		SELECT full_name FROM repos
+		WHERE sync_status = 'pending'
+		   OR (sync_status = 'error' AND updated_at < NOW() - $2::interval)
+		ORDER BY updated_at ASC
+		LIMIT $1
+	`, limit, fmt.Sprintf("%d seconds", int(errorCooldown.Seconds())))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ── Data Explorer queries ───────────────────────────────────────────────────────
 
 // ListReposFiltered returns a page of repos and total count matching filters.
