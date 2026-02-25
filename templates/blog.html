@@ -40,23 +40,38 @@
   <section class="blog-section">
     <h2>Introduction</h2>
     <p class="blog-prose">
-      We've been tracking pull request review time across hundreds of popular public GitHub
+      We've been tracking pull request review time across thousands of popular public GitHub
       repositories. The numbers above update in real time as new repos are synced and new
       PRs are merged. Here's what the aggregate data tells us about how code review actually
       works in practice — and where the bottlenecks tend to be.
     </p>
     <p class="blog-prose">
-      <!-- Replace this paragraph with your introduction. -->
+      The headline numbers are striking: 2.8 million merged PRs, a 9-day average review time,
+      and a 12.6-hour median. That gap — 9 days vs. 12.6 hours — is the most important number
+      on this page. It tells you the distribution is massively right-skewed. Most PRs move fast.
+      A small number of PRs are catastrophically slow, and they drag the average up by days.
     </p>
   </section>
 
   <section class="blog-section">
     <h2>Key Findings</h2>
     <p class="blog-prose">
-      <!-- Summarize your main findings here. What surprised you most in the data? -->
+      The median review time is actually down 84% since September 2010, while the average is up
+      250% over the same period. Read that again: the typical PR is reviewed faster than ever,
+      but the worst-case PRs have gotten dramatically worse. Outliers aren't shrinking —
+      they're growing in both size and frequency as repos scale up.
     </p>
     <p class="blog-prose">
-      <!-- Add more paragraphs as needed. -->
+      The same pattern holds for PR size. The average PR is 823 lines today vs. a much smaller
+      baseline in 2010 (up 454%), but the median is only 28 lines (down 45%). The distribution
+      has bifurcated: most developers ship small, focused changes, but a growing tail of
+      massive PRs skews every aggregate metric. When you see "9-day average review time,"
+      you're mostly looking at that tail.
+    </p>
+    <p class="blog-prose">
+      Perhaps the most optimistic data point: the unreviewed merge rate dropped from 100% in
+      2010 to 20.1% today. In the early days of GitHub, most PRs were merged without any
+      review at all. Code review culture has fundamentally changed over 15 years.
     </p>
   </section>
 
@@ -64,11 +79,22 @@
     <h2>PR Size and Review Time</h2>
     <p class="blog-prose">
       One of the clearest signals in the data is the relationship between pull request size
-      and how long it takes to get reviewed and merged. Smaller PRs tend to move faster —
-      but the effect is non-linear and varies significantly across repos and teams.
+      and how long it takes to get reviewed and merged. The median review time for PRs under
+      50 lines is 6.6 hours. For PRs in the 51–200 line range it jumps to 20.9 hours —
+      a 3× increase for adding a modest amount of code. PRs in the 501–1k range sit at 48.9
+      hours median, nearly 8× slower than small PRs.
     </p>
     <p class="blog-prose">
-      <!-- Discuss the size/time correlation with your own observations. -->
+      There's a counterintuitive wrinkle at the top end: PRs over 1,000 lines are slightly
+      faster than the 501–1k bucket (48.2h vs. 48.9h median). Very large PRs may get
+      triaged differently — either escalated with urgency or, more likely, they accumulate
+      in long-lived feature branches where the merge is planned rather than spontaneous.
+      Either way, the data suggests "huge PR" and "forgotten PR" aren't the same thing.
+    </p>
+    <p class="blog-prose">
+      59% of all PRs in the dataset are under 50 lines. That's not a coincidence — teams
+      that ship small have figured something out. The practical takeaway: keeping a PR under
+      200 lines gives you roughly a 3× improvement in median review speed.
     </p>
     <p class="blog-prose">
       <a href="/stats" class="link">Explore the full interactive charts →</a>
@@ -83,7 +109,19 @@
       Both patterns show up clearly in the leaderboards.
     </p>
     <p class="blog-prose">
-      <!-- Add your analysis of reviewer behavior patterns here. -->
+      The changes requested rate sits at 3.2% globally — up from 0% in 2010. That's low, but
+      it scales predictably with PR size: 2.8% for tiny PRs, climbing to 11% for 501–1k line
+      PRs. Interestingly, the rate dips back to 9.3% for PRs over 1,000 lines. One possible
+      explanation: reviewers are more likely to leave directional comments than block a massive
+      PR outright. The clean approval rate tells the inverse story — 95.6% for small PRs,
+      dropping to 85.2% at the 501–1k range.
+    </p>
+    <p class="blog-prose">
+      Time to first review shows the sharpest avg/median split of any metric: 74.6h average
+      vs. 0.8h median. Half of all PRs get their first review comment in under an hour.
+      The 74.6h average is being pulled almost entirely by PRs that sat untouched for days
+      or weeks before anyone looked. If you're waiting on a review, you're not waiting because
+      reviews are slow — you're waiting because nobody has started yet.
     </p>
   </section>
 
@@ -95,7 +133,17 @@
       and explicit review norms.
     </p>
     <p class="blog-prose">
-      <!-- Highlight specific repos or patterns you found interesting. -->
+      The current merge rate across the dataset is 108.4% — more PRs are being merged each
+      month than are being opened. That's not a math error; it means repos are clearing
+      backlog, merging PRs that were opened in prior months faster than new ones are arriving.
+      This is up from 64.6% in 2010, when backlogs were actively growing. The ecosystem has
+      gotten substantially better at shipping.
+    </p>
+    <p class="blog-prose">
+      Lines of code per contributor per month have grown from 197 in 2010 to 5,007 today —
+      a 25× increase. Developers are writing dramatically more code than 15 years ago and
+      getting it reviewed faster. Better tooling (CI, bots, review assignment, draft PRs)
+      has absorbed most of the scaling pressure that would otherwise make review times spiral.
     </p>
     <p class="blog-prose">
       <a href="/leaderboard/speed" class="link">See the full speed leaderboard →</a>
