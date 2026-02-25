@@ -1993,3 +1993,180 @@ func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
 	defer rows.Close()
 	return scanRepos(rows)
 }
+
+// ── Data Explorer queries ───────────────────────────────────────────────────────
+
+// ListReposFiltered returns a page of repos and total count matching filters.
+// sortBy: "stars", "speed", "slow", or "" (default: most PRs).
+func (d *DB) ListReposFiltered(limit, offset int, sortBy, search, status string) ([]Repo, int, error) {
+	col, dir := "merged_pr_count", "DESC"
+	switch sortBy {
+	case "stars":
+		col, dir = "stars", "DESC"
+	case "speed":
+		col, dir = "avg_merge_time_secs", "ASC"
+	case "slow":
+		col, dir = "avg_merge_time_secs", "DESC"
+	}
+	q := fmt.Sprintf(`
+		SELECT full_name, owner, name, description, stars, language, org_name,
+		       last_synced, sync_status, pr_count, merged_pr_count,
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       COUNT(*) OVER() AS total
+		FROM repos
+		WHERE ($1 = '' OR full_name ILIKE '%%' || $1 || '%%')
+		  AND ($2 = '' OR sync_status = $2)
+		ORDER BY %s %s
+		LIMIT $3 OFFSET $4
+	`, col, dir)
+	rows, err := d.conn.Query(q, search, status, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var repos []Repo
+	var total int
+	for rows.Next() {
+		var r Repo
+		var lastSynced sql.NullTime
+		if err := rows.Scan(
+			&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
+			&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
+			&r.AvgMergeTimeSecs, &r.MinMergeTimeSecs, &r.MaxMergeTimeSecs,
+			&total,
+		); err != nil {
+			log.Printf("db: ListReposFiltered scan: %v", err)
+			continue
+		}
+		if lastSynced.Valid {
+			t := lastSynced.Time
+			r.LastSynced = &t
+		}
+		repos = append(repos, r)
+	}
+	return repos, total, rows.Err()
+}
+
+// ListPRsFiltered returns a page of merged PRs and total count matching filters.
+// sortBy: "speed", "slow", "size", or "" (default: most recent).
+func (d *DB) ListPRsFiltered(limit, offset int, repo, author, sortBy string) ([]PullRequest, int, error) {
+	col, dir := "merged_at", "DESC"
+	switch sortBy {
+	case "speed":
+		col, dir = "merge_time_secs", "ASC"
+	case "slow":
+		col, dir = "merge_time_secs", "DESC"
+	case "size":
+		col, dir = "(additions + deletions)", "DESC"
+	}
+	q := fmt.Sprintf(`
+		SELECT id, repo_full_name, number, title, author_login, merged,
+		       opened_at, merged_at, merge_time_secs, review_count, changes_requested_count,
+		       additions, deletions,
+		       COUNT(*) OVER() AS total
+		FROM pull_requests
+		WHERE merged = TRUE
+		  AND ($1 = '' OR repo_full_name ILIKE '%%' || $1 || '%%')
+		  AND ($2 = '' OR author_login ILIKE '%%' || $2 || '%%')
+		ORDER BY %s %s NULLS LAST
+		LIMIT $3 OFFSET $4
+	`, col, dir)
+	rows, err := d.conn.Query(q, repo, author, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var prs []PullRequest
+	var total int
+	for rows.Next() {
+		var pr PullRequest
+		var mergedAt sql.NullTime
+		var mts sql.NullInt64
+		if err := rows.Scan(
+			&pr.ID, &pr.RepoFullName, &pr.Number, &pr.Title, &pr.AuthorLogin, &pr.Merged,
+			&pr.OpenedAt, &mergedAt, &mts, &pr.ReviewCount, &pr.ChangesRequestedCount,
+			&pr.Additions, &pr.Deletions,
+			&total,
+		); err != nil {
+			log.Printf("db: ListPRsFiltered scan: %v", err)
+			continue
+		}
+		if mergedAt.Valid {
+			t := mergedAt.Time
+			pr.MergedAt = &t
+		}
+		if mts.Valid {
+			pr.MergeTimeSecs = &mts.Int64
+		}
+		prs = append(prs, pr)
+	}
+	return prs, total, rows.Err()
+}
+
+// ListReviewsFiltered returns a page of reviews and total count matching filters.
+func (d *DB) ListReviewsFiltered(limit, offset int, reviewer, state string) ([]Review, int, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, repo_full_name, pr_number, reviewer_login, state, submitted_at,
+		       COUNT(*) OVER() AS total
+		FROM reviews
+		WHERE ($1 = '' OR reviewer_login ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR state = $2)
+		ORDER BY submitted_at DESC
+		LIMIT $3 OFFSET $4
+	`, reviewer, state, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var revs []Review
+	var total int
+	for rows.Next() {
+		var rev Review
+		if err := rows.Scan(
+			&rev.ID, &rev.RepoFullName, &rev.PRNumber, &rev.ReviewerLogin, &rev.State, &rev.SubmittedAt,
+			&total,
+		); err != nil {
+			log.Printf("db: ListReviewsFiltered scan: %v", err)
+			continue
+		}
+		revs = append(revs, rev)
+	}
+	return revs, total, rows.Err()
+}
+
+// ListUsersFiltered returns a page of users and total count matching a search term on login or name.
+func (d *DB) ListUsersFiltered(limit, offset int, search string) ([]User, int, error) {
+	rows, err := d.conn.Query(`
+		SELECT login, name, avatar_url, bio, public_repos, followers,
+		       company, location, is_org, last_fetched,
+		       COUNT(*) OVER() AS total
+		FROM users
+		WHERE ($1 = '' OR login ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%')
+		ORDER BY followers DESC
+		LIMIT $2 OFFSET $3
+	`, search, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var users []User
+	var total int
+	for rows.Next() {
+		var u User
+		var lastFetched sql.NullTime
+		if err := rows.Scan(
+			&u.Login, &u.Name, &u.AvatarURL, &u.Bio, &u.PublicRepos, &u.Followers,
+			&u.Company, &u.Location, &u.IsOrg, &lastFetched,
+			&total,
+		); err != nil {
+			log.Printf("db: ListUsersFiltered scan: %v", err)
+			continue
+		}
+		if lastFetched.Valid {
+			t := lastFetched.Time
+			u.LastFetched = &t
+		}
+		users = append(users, u)
+	}
+	return users, total, rows.Err()
+}

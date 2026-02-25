@@ -1,0 +1,116 @@
+{{define "title"}}PR Review Time: What the Data Says — ngmi{{end}}
+
+{{define "content"}}
+<article class="blog-post">
+
+  <div class="breadcrumb">
+    <a href="/" class="bc-link">ngmi</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">blog</span>
+  </div>
+
+  <header class="blog-header">
+    <h1 class="blog-title">PR Review Time: What the Data Says</h1>
+    <p class="blog-byline">
+      ngmi.review
+      &nbsp;·&nbsp;
+      February 2026
+      &nbsp;·&nbsp;
+      <span class="blog-live-badge"><span class="blog-live-dot"></span>live data</span>
+    </p>
+  </header>
+
+  <!-- Live stats widget — polls every 30s, server-renders on first load -->
+  <div class="blog-live-wrap">
+    <div class="blog-live-header">
+      <span class="blog-live-label">Live snapshot</span>
+      <span class="blog-live-updated muted" id="blog-updated"></span>
+    </div>
+    <div id="blog-live-stats"
+         hx-get="/api/blog/stats"
+         hx-trigger="every 30s"
+         hx-swap="innerHTML"
+         hx-on::after-request="document.getElementById('blog-updated').textContent = 'updated ' + new Date().toLocaleTimeString()">
+      {{template "blog_stats" .}}
+    </div>
+  </div>
+
+  <!-- ── Prose sections ── -->
+
+  <section class="blog-section">
+    <h2>Introduction</h2>
+    <p class="blog-prose">
+      We've been tracking pull request review time across hundreds of popular public GitHub
+      repositories. The numbers above update in real time as new repos are synced and new
+      PRs are merged. Here's what the aggregate data tells us about how code review actually
+      works in practice — and where the bottlenecks tend to be.
+    </p>
+    <p class="blog-prose">
+      <!-- Replace this paragraph with your introduction. -->
+    </p>
+  </section>
+
+  <section class="blog-section">
+    <h2>Key Findings</h2>
+    <p class="blog-prose">
+      <!-- Summarize your main findings here. What surprised you most in the data? -->
+    </p>
+    <p class="blog-prose">
+      <!-- Add more paragraphs as needed. -->
+    </p>
+  </section>
+
+  <section class="blog-section">
+    <h2>PR Size and Review Time</h2>
+    <p class="blog-prose">
+      One of the clearest signals in the data is the relationship between pull request size
+      and how long it takes to get reviewed and merged. Smaller PRs tend to move faster —
+      but the effect is non-linear and varies significantly across repos and teams.
+    </p>
+    <p class="blog-prose">
+      <!-- Discuss the size/time correlation with your own observations. -->
+    </p>
+    <p class="blog-prose">
+      <a href="/stats" class="link">Explore the full interactive charts →</a>
+    </p>
+  </section>
+
+  <section class="blog-section">
+    <h2>Review Behavior Patterns</h2>
+    <p class="blog-prose">
+      Not all reviews are equal. Some contributors consistently push back with
+      <em>changes requested</em>, acting as quality gatekeepers. Others approve quickly.
+      Both patterns show up clearly in the leaderboards.
+    </p>
+    <p class="blog-prose">
+      <!-- Add your analysis of reviewer behavior patterns here. -->
+    </p>
+  </section>
+
+  <section class="blog-section">
+    <h2>The Fastest (and Slowest) Repos</h2>
+    <p class="blog-prose">
+      Repo culture matters enormously. The fastest repos in the dataset merge PRs in minutes.
+      The slowest take months. The difference isn't just team size — it's process, tooling,
+      and explicit review norms.
+    </p>
+    <p class="blog-prose">
+      <!-- Highlight specific repos or patterns you found interesting. -->
+    </p>
+    <p class="blog-prose">
+      <a href="/leaderboard/speed" class="link">See the full speed leaderboard →</a>
+    </p>
+  </section>
+
+  <section class="blog-section">
+    <h2>Methodology</h2>
+    <p class="blog-prose">
+      Data is collected from public GitHub repositories via the GitHub REST API. Only merged
+      pull requests are included in the timing calculations. Review time is measured from
+      PR open to PR merge. Repos with fewer than 3 merged PRs are excluded from leaderboards.
+      All raw data is browsable on the <a href="/data" class="link">data explorer</a>.
+    </p>
+  </section>
+
+</article>
+{{end}}

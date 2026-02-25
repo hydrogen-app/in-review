@@ -78,6 +78,15 @@ func main() {
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
 
+	r.Get("/data", h.DataExplorer)
+	r.Get("/data/repos", h.DataRepos)
+	r.Get("/data/prs", h.DataPRs)
+	r.Get("/data/reviews", h.DataReviews)
+	r.Get("/data/users", h.DataUsers)
+
+	r.Get("/blog", h.Blog)
+	r.Get("/api/blog/stats", h.BlogLiveStats)
+
 	// Auth routes
 	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/github", h.AuthGitHub)

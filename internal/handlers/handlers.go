@@ -141,7 +141,32 @@ func (h *Handler) loadTemplates() {
 		h.tmpls[page] = tmpl
 	}
 
-	partials := []string{"search_results", "leaderboard", "leaderboard_rows", "leaderboard_search"}
+	// blog page needs blog_stats partial so {{template "blog_stats" .}} works inline.
+	h.tmpls["blog"] = template.Must(
+		template.New("").Funcs(h.funcMap).ParseFiles(
+			filepath.Join("templates", "layout.html"),
+			filepath.Join("templates", "blog.html"),
+			filepath.Join("templates", "partials", "blog_stats.html"),
+		),
+	)
+
+	// data page needs all data partials so {{template "data_repos" .}} works inline.
+	h.tmpls["data"] = template.Must(
+		template.New("").Funcs(h.funcMap).ParseFiles(
+			filepath.Join("templates", "layout.html"),
+			filepath.Join("templates", "data.html"),
+			filepath.Join("templates", "partials", "data_repos.html"),
+			filepath.Join("templates", "partials", "data_prs.html"),
+			filepath.Join("templates", "partials", "data_reviews.html"),
+			filepath.Join("templates", "partials", "data_users.html"),
+		),
+	)
+
+	partials := []string{
+		"search_results", "leaderboard", "leaderboard_rows", "leaderboard_search",
+		"data_repos", "data_prs", "data_reviews", "data_users",
+		"blog_stats",
+	}
 	for _, partial := range partials {
 		tmpl := template.Must(
 			template.New(partial).Funcs(h.funcMap).ParseFiles(
