@@ -191,6 +191,20 @@ query GetUserRepos($login: String!, $first: Int!) {
   }
 }`
 
+const getRepoContributorsQuery = `
+query GetRepoContributors($owner: String!, $name: String!, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: [MERGED], first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        author { login }
+        reviews(first: 10) {
+          nodes { author { login } }
+        }
+      }
+    }
+  }
+}`
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 // SyncRepo fetches repo metadata + all merged PRs with embedded reviews using
@@ -374,6 +388,48 @@ func (c *Client) GetUserRepos(ctx context.Context, username string, limit int) (
 		return nil, ErrNotFound
 	}
 	return mapRepoNodes(data.User.Repositories.Nodes), nil
+}
+
+// GetRepoContributors returns distinct logins of PR authors + reviewers
+// from the most recent prLimit merged PRs.
+func (c *Client) GetRepoContributors(ctx context.Context, owner, name string, prLimit int) ([]string, error) {
+	var data struct {
+		Repository *struct {
+			PullRequests struct {
+				Nodes []struct {
+					Author  *gqlActor `json:"author"`
+					Reviews struct {
+						Nodes []struct {
+							Author *gqlActor `json:"author"`
+						} `json:"nodes"`
+					} `json:"reviews"`
+				} `json:"nodes"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
+	}
+	if err := c.graphql(ctx, getRepoContributorsQuery, map[string]interface{}{
+		"owner": owner, "name": name, "first": prLimit,
+	}, &data); err != nil {
+		return nil, err
+	}
+	if data.Repository == nil {
+		return nil, ErrNotFound
+	}
+	seen := make(map[string]bool)
+	var logins []string
+	for _, pr := range data.Repository.PullRequests.Nodes {
+		if pr.Author != nil && pr.Author.Login != "" && !seen[pr.Author.Login] {
+			seen[pr.Author.Login] = true
+			logins = append(logins, pr.Author.Login)
+		}
+		for _, rev := range pr.Reviews.Nodes {
+			if rev.Author != nil && rev.Author.Login != "" && !seen[rev.Author.Login] {
+				seen[rev.Author.Login] = true
+				logins = append(logins, rev.Author.Login)
+			}
+		}
+	}
+	return logins, nil
 }
 
 // SearchRepos searches GitHub for repositories (REST — search API has no GraphQL equivalent).
