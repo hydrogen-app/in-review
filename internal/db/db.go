@@ -1110,7 +1110,8 @@ func (d *DB) UserPRSizeDist(login string) ([]PRSizeBucket, error) {
 				WHEN additions+deletions <=  200 THEN '51–200'
 				WHEN additions+deletions <=  500 THEN '201–500'
 				WHEN additions+deletions <= 1000 THEN '501–1k'
-				ELSE '1k+'
+				WHEN additions+deletions <= 5000 THEN '1k–5k'
+				ELSE '5k+'
 			END AS bucket,
 			COUNT(*) AS pr_count
 		FROM pull_requests
@@ -1227,7 +1228,8 @@ func (d *DB) RepoSizeChartData(fullName string, cutoffPct float64) ([]PRSizeBuck
 				WHEN (additions + deletions) <= 200  THEN 2
 				WHEN (additions + deletions) <= 500  THEN 3
 				WHEN (additions + deletions) <= 1000 THEN 4
-				ELSE 5
+				WHEN (additions + deletions) <= 5000 THEN 5
+				ELSE 6
 			END AS bucket,
 			COUNT(*) AS pr_count,
 			COALESCE(AVG(merge_time_secs)::FLOAT, 0) AS avg_secs,
@@ -1247,7 +1249,7 @@ func (d *DB) RepoSizeChartData(fullName string, cutoffPct float64) ([]PRSizeBuck
 	}
 	defer rows.Close()
 
-	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k+"}
+	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k–5k", "5k+"}
 	var out []PRSizeBucket
 	for rows.Next() {
 		var bucketNum int
@@ -1255,7 +1257,7 @@ func (d *DB) RepoSizeChartData(fullName string, cutoffPct float64) ([]PRSizeBuck
 		if err := rows.Scan(&bucketNum, &b.PRCount, &b.AvgSecs, &b.ApprovalRate); err != nil {
 			continue
 		}
-		if bucketNum >= 1 && bucketNum <= 5 {
+		if bucketNum >= 1 && bucketNum <= 6 {
 			b.Label = labels[bucketNum-1]
 		}
 		out = append(out, b)
@@ -1306,7 +1308,8 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 				WHEN (pr.additions + pr.deletions) <= 200  THEN 2
 				WHEN (pr.additions + pr.deletions) <= 500  THEN 3
 				WHEN (pr.additions + pr.deletions) <= 1000 THEN 4
-				ELSE 5
+				WHEN (pr.additions + pr.deletions) <= 5000 THEN 5
+				ELSE 6
 			END AS bucket,
 			COUNT(*) AS pr_count,
 			COALESCE(AVG(pr.merge_time_secs)::FLOAT, 0) AS avg_secs,
@@ -1338,7 +1341,7 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 	}
 	defer rows.Close()
 
-	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k+"}
+	labels := []string{"≤50", "51–200", "201–500", "501–1k", "1k–5k", "5k+"}
 	var out []GlobalSizeBucket
 	for rows.Next() {
 		var bucketNum int
@@ -1347,7 +1350,7 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 			&b.ApprovalRate, &b.ChangesRequestedRate, &b.AvgChangesRequested); err != nil {
 			continue
 		}
-		if bucketNum >= 1 && bucketNum <= 5 {
+		if bucketNum >= 1 && bucketNum <= 6 {
 			b.Label = labels[bucketNum-1]
 		}
 		out = append(out, b)
