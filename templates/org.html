@@ -94,6 +94,13 @@
       </div>
       <div class="chart-aside" id="tc-unreviewed-aside"></div>
     </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-label">Lines of code per contributor (monthly)</div>
+        <div class="chart-wrap"><canvas id="tc-loc"></canvas></div>
+      </div>
+      <div class="chart-aside" id="tc-loc-aside"></div>
+    </div>
   </section>
   <script>
   (function() {
@@ -130,9 +137,10 @@
     });
     var cFRTime  = new Chart(document.getElementById('tc-first-review'), { type:'line', data:{ labels:t.labels, datasets:[{ label:'Avg', data:t.avgFirstReviewHours, borderColor:'#bc8cff', backgroundColor:'#bc8cff15', borderWidth:2, fill:false },{ label:'Median', data:t.medFirstReviewHours, borderColor:'#a371f7', backgroundColor:'#a371f715', borderWidth:2, fill:false }]}, options:Object.assign({},lineOpts,{scales:{x:baseX,y:baseY(function(v){return v+'h';})}}) });
     var cUnrev   = new Chart(document.getElementById('tc-unreviewed'),   { type:'line', data:{ labels:t.labels, datasets:[{ data:t.unreviewedMergeRate, borderColor:'#ffa657', backgroundColor:'#ffa65715', borderWidth:2, fill:true }]}, options:Object.assign({},noLegend,{scales:{x:baseX,y:{min:0,max:100,ticks:{color:tickColor,font:{size:11},callback:function(v){return v+'%';}},grid:{color:gridColor}}}}) });
+    var cLoc     = new Chart(document.getElementById('tc-loc'),          { type:'line', data:{ labels:t.labels, datasets:[{ data:t.linesPerContrib, borderColor:'#39c5cf', backgroundColor:'#39c5cf15', borderWidth:2, fill:true }]}, options:Object.assign({},noLegend,{scales:{x:baseX,y:baseY()}}) });
 
-    var allCharts = [cSize, cTime, cCRRate, cCount, cFRTime, cUnrev];
-    var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts],[t.avgFirstReviewHours,t.medFirstReviewHours],[t.unreviewedMergeRate]];
+    var allCharts = [cSize, cTime, cCRRate, cCount, cFRTime, cUnrev, cLoc];
+    var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts],[t.avgFirstReviewHours,t.medFirstReviewHours],[t.unreviewedMergeRate],[t.linesPerContrib]];
 
     window.ngmiSetRange = function(n) {
       window._ngmiRange = n;
@@ -184,6 +192,7 @@
     fill('tc-count-aside',        [statCard(t.prCounts[n-1]+' PRs','Merged, '+latest), statCard(Math.max.apply(null,t.prCounts)+' PRs','Peak month'), trendCard(t.prCounts[0],t.prCounts[n-1],0,0,first)]);
     fill('tc-first-review-aside', [statCard(t.avgFirstReviewHours[n-1]+'h','Avg first review, '+latest), statCard(t.medFirstReviewHours[n-1]+'h','Median first review, '+latest), trendCard(t.avgFirstReviewHours[0],t.avgFirstReviewHours[n-1],t.medFirstReviewHours[0],t.medFirstReviewHours[n-1],first)]);
     fill('tc-unreviewed-aside',   [statCard(t.unreviewedMergeRate[n-1]+'%','Unreviewed, '+latest), statCard(t.unreviewedMergeRate[0]+'%','Unreviewed, '+first), trendCard(t.unreviewedMergeRate[0],t.unreviewedMergeRate[n-1],0,0,first)]);
+    fill('tc-loc-aside',          [statCard(Math.round(t.linesPerContrib[n-1])+' lines','Per contributor, '+latest), statCard(Math.round(t.linesPerContrib[0])+' lines','Per contributor, '+first), trendCard(t.linesPerContrib[0],t.linesPerContrib[n-1],0,0,first)]);
   })();
   </script>
   </div>{{/* end #charts-area */}}

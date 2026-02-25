@@ -134,6 +134,7 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 			tp.AvgFirstReviewHours = append(tp.AvgFirstReviewHours, roundTo1(p.AvgFirstReviewSecs/3600))
 			tp.MedFirstReviewHours = append(tp.MedFirstReviewHours, roundTo1(p.MedFirstReviewSecs/3600))
 			tp.UnreviewedMergeRate = append(tp.UnreviewedMergeRate, roundTo1(p.UnreviewedRate))
+			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
 		if raw, err := json.Marshal(tp); err == nil {
 			data.TimeChartJSON = template.JS(raw)

@@ -1166,6 +1166,7 @@ type TimeSeriesPoint struct {
 	AvgFirstReviewSecs   float64
 	MedFirstReviewSecs   float64
 	UnreviewedRate       float64
+	LinesPerContrib      float64
 }
 
 // GlobalTimeSeriesData returns monthly aggregated PR metrics across all repos.
@@ -1207,7 +1208,11 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS unreviewed_rate
+			) AS unreviewed_rate,
+		COALESCE(
+			SUM(pr.additions + pr.deletions)::FLOAT / NULLIF(COUNT(DISTINCT pr.author_login), 0),
+			0
+		) AS lines_per_contrib
 		FROM pull_requests pr
 		CROSS JOIN cutoff
 		JOIN repos r ON r.full_name = pr.repo_full_name
@@ -1229,7 +1234,8 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
 			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
-			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate,
+			&p.LinesPerContrib); err != nil {
 			continue
 		}
 		out = append(out, p)
@@ -1271,7 +1277,11 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS unreviewed_rate
+			) AS unreviewed_rate,
+		COALESCE(
+			SUM(pr.additions + pr.deletions)::FLOAT / NULLIF(COUNT(DISTINCT pr.author_login), 0),
+			0
+		) AS lines_per_contrib
 		FROM pull_requests pr
 		CROSS JOIN cutoff
 		WHERE pr.repo_full_name=$1 AND pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
@@ -1289,7 +1299,8 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
 			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
-			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate,
+			&p.LinesPerContrib); err != nil {
 			continue
 		}
 		out = append(out, p)
@@ -1372,7 +1383,11 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 				100.0 * SUM(CASE WHEN pr.review_count = 0 THEN 1 ELSE 0 END)::FLOAT /
 				NULLIF(COUNT(*), 0),
 				0
-			) AS unreviewed_rate
+			) AS unreviewed_rate,
+		COALESCE(
+			SUM(pr.additions + pr.deletions)::FLOAT / NULLIF(COUNT(DISTINCT pr.author_login), 0),
+			0
+		) AS lines_per_contrib
 		FROM pull_requests pr
 		CROSS JOIN cutoff
 		WHERE pr.repo_full_name IN (SELECT full_name FROM org_repos)
@@ -1391,7 +1406,8 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 		var p TimeSeriesPoint
 		if err := rows.Scan(&p.Label, &p.PRCount, &p.AvgSize, &p.MedianSize,
 			&p.AvgSecs, &p.MedianSecs, &p.ChangesRequestedRate,
-			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate); err != nil {
+			&p.AvgFirstReviewSecs, &p.MedFirstReviewSecs, &p.UnreviewedRate,
+			&p.LinesPerContrib); err != nil {
 			continue
 		}
 		out = append(out, p)

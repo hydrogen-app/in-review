@@ -172,6 +172,14 @@
       </div>
       <div class="chart-aside" id="tc-unreviewed-aside"></div>
     </div>
+
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-label">Lines of code per contributor (monthly)</div>
+        <div class="chart-wrap"><canvas id="tc-loc"></canvas></div>
+      </div>
+      <div class="chart-aside" id="tc-loc-aside"></div>
+    </div>
   </section>
   <script>
   (function() {
@@ -265,14 +273,22 @@
       ]},
       options: Object.assign({}, noLegend, { scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } } })
     });
+    new Chart(document.getElementById('tc-loc'), {
+      type: 'line',
+      data: { labels: t.labels, datasets: [
+        { label: 'Lines / contributor', data: t.linesPerContrib, borderColor: '#39c5cf', backgroundColor: '#39c5cf15', borderWidth: 2, fill: true }
+      ]},
+      options: Object.assign({}, noLegend, { scales: { x: baseX, y: baseY() } })
+    });
 
     var allCharts = [
       Chart.getChart('tc-size'), Chart.getChart('tc-time'),
       Chart.getChart('tc-crrate'), Chart.getChart('tc-count'),
       Chart.getChart('tc-opened'), Chart.getChart('tc-merge-rate'),
-      Chart.getChart('tc-first-review'), Chart.getChart('tc-unreviewed')
+      Chart.getChart('tc-first-review'), Chart.getChart('tc-unreviewed'),
+      Chart.getChart('tc-loc')
     ];
-    var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts],[t.openedCounts],[t.mergeVsOpenRate],[t.avgFirstReviewHours,t.medFirstReviewHours],[t.unreviewedMergeRate]];
+    var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts],[t.openedCounts],[t.mergeVsOpenRate],[t.avgFirstReviewHours,t.medFirstReviewHours],[t.unreviewedMergeRate],[t.linesPerContrib]];
     window.ngmiSetRange = function(n) {
       window._ngmiRange = n;
       var start = n > 0 ? Math.max(0, t.labels.length - n) : 0;
@@ -380,6 +396,11 @@
       statCard(t.unreviewedMergeRate[n-1] + '%', 'Unreviewed, ' + latest),
       statCard(t.unreviewedMergeRate[0] + '%', 'Unreviewed, ' + first),
       trendCard(t.unreviewedMergeRate[0], t.unreviewedMergeRate[n-1], 0, 0, first)
+    ]);
+    populateAside('tc-loc-aside', [
+      statCard(Math.round(t.linesPerContrib[n-1]) + ' lines', 'Per contributor, ' + latest),
+      statCard(Math.round(t.linesPerContrib[0]) + ' lines', 'Per contributor, ' + first),
+      trendCard(t.linesPerContrib[0], t.linesPerContrib[n-1], 0, 0, first)
     ]);
   })();
   </script>

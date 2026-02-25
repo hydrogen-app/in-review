@@ -50,6 +50,7 @@ type timeChartPayload struct {
 	AvgFirstReviewHours  []float64 `json:"avgFirstReviewHours"`
 	MedFirstReviewHours  []float64 `json:"medFirstReviewHours"`
 	UnreviewedMergeRate  []float64 `json:"unreviewedMergeRate"`
+	LinesPerContrib      []float64 `json:"linesPerContrib"`
 }
 
 func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
@@ -170,6 +171,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 			tp.AvgFirstReviewHours = append(tp.AvgFirstReviewHours, roundTo1(p.AvgFirstReviewSecs/3600))
 			tp.MedFirstReviewHours = append(tp.MedFirstReviewHours, roundTo1(p.MedFirstReviewSecs/3600))
 			tp.UnreviewedMergeRate = append(tp.UnreviewedMergeRate, roundTo1(p.UnreviewedRate))
+			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
 		// Build opened-per-month and merge rate aligned to merge-month labels.
 		openedMap := make(map[string]int)
