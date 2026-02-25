@@ -119,6 +119,9 @@ func New(database *db.DB, gh *github.Client, w *worker.Worker, cache *rdb.Client
 			}
 			return *p
 		},
+		"int64ToInt":  func(v int64) int { return int(v) },
+		"floatToInt":  func(v float64) int { return int(v) },
+		"floatToInt64": func(v float64) int64 { return int64(v) },
 	}
 	h.loadTemplates()
 	return h

@@ -20,6 +20,9 @@
         {{if .User.Location}}<span class="meta-item">{{.User.Location}}</span>{{end}}
         {{if .User.Followers}}<span class="meta-item">{{formatNumber .User.Followers}} followers</span>{{end}}
         {{if .User.PublicRepos}}<span class="meta-item">{{.User.PublicRepos}} repos</span>{{end}}
+        {{if and .ReviewerStats .ReviewerStats.LastReviewedAt}}
+        <span class="meta-item muted">last reviewed {{timeAgo .ReviewerStats.LastReviewedAt}}</span>
+        {{end}}
       </div>
     </div>
     <a href="https://github.com/{{.User.Login}}" target="_blank" rel="noopener" class="btn btn-outline">GitHub ↗</a>
@@ -129,10 +132,6 @@
           <span class="col-stat-label">Merged PRs</span>
         </div>
         <div class="col-stat">
-          <span class="col-stat-num">{{formatNumber .TotalPRs}}</span>
-          <span class="col-stat-label">Total PRs</span>
-        </div>
-        <div class="col-stat">
           <span class="col-stat-num speed">{{formatDuration .AvgMergeTimeSecs}}</span>
           <span class="col-stat-label">Avg Merge Time</span>
         </div>
@@ -140,6 +139,36 @@
         <div class="col-stat">
           <span class="col-stat-num">{{percent .MergedPRs .TotalPRs}}%</span>
           <span class="col-stat-label">Merge Rate</span>
+        </div>
+        {{end}}
+        {{if gt .TotalLinesWritten 0}}
+        <div class="col-stat">
+          <span class="col-stat-num">{{formatNumber (int64ToInt .TotalLinesWritten)}}</span>
+          <span class="col-stat-label">Total Lines Written</span>
+        </div>
+        {{end}}
+        {{if gt .AvgPRSize 0}}
+        <div class="col-stat">
+          <span class="col-stat-num">{{formatNumber (floatToInt .AvgPRSize)}}</span>
+          <span class="col-stat-label">Avg PR Size (lines)</span>
+        </div>
+        {{end}}
+        {{if gt .CleanApprovalRate 0}}
+        <div class="col-stat">
+          <span class="col-stat-num green">{{printf "%.0f" .CleanApprovalRate}}%</span>
+          <span class="col-stat-label">Clean Approval Rate</span>
+        </div>
+        {{end}}
+        {{if gt .AvgChangesRequested 0}}
+        <div class="col-stat">
+          <span class="col-stat-num warn">{{printf "%.1f" .AvgChangesRequested}}×</span>
+          <span class="col-stat-label">Avg Changes Requested</span>
+        </div>
+        {{end}}
+        {{if gt .AvgFirstReviewSecs 0}}
+        <div class="col-stat">
+          <span class="col-stat-num">{{formatDuration (floatToInt64 .AvgFirstReviewSecs)}}</span>
+          <span class="col-stat-label">Avg Wait for First Review</span>
         </div>
         {{end}}
       </div>
@@ -151,10 +180,237 @@
 
   </div><!-- /two-col -->
 
-  <!-- ── Contributed Repos ── -->
+  <!-- ── Personal Records ── -->
+  {{if or .FastestPR .SlowestPR}}
+  <section class="section">
+    <h2 class="section-title">Personal Records</h2>
+    <div class="two-col">
+      {{if .FastestPR}}
+      <div class="col-card">
+        <h3 class="col-title">Fastest Merge</h3>
+        <div class="col-stats">
+          <div class="col-stat">
+            <span class="col-stat-num speed">{{formatDuration .FastestPR.MergeTimeSecs}}</span>
+            <span class="col-stat-label">merge time</span>
+          </div>
+        </div>
+        <a href="https://github.com/{{.FastestPR.RepoFullName}}/pull/{{.FastestPR.Number}}"
+           target="_blank" rel="noopener" class="pr-link mono record-pr-title">
+          {{.FastestPR.RepoFullName}} #{{.FastestPR.Number}}
+        </a>
+        <p class="record-pr-desc">{{.FastestPR.Title}}</p>
+      </div>
+      {{end}}
+      {{if .SlowestPR}}
+      <div class="col-card">
+        <h3 class="col-title">Slowest Merge</h3>
+        <div class="col-stats">
+          <div class="col-stat">
+            <span class="col-stat-num slow">{{formatDuration .SlowestPR.MergeTimeSecs}}</span>
+            <span class="col-stat-label">merge time</span>
+          </div>
+        </div>
+        <a href="https://github.com/{{.SlowestPR.RepoFullName}}/pull/{{.SlowestPR.Number}}"
+           target="_blank" rel="noopener" class="pr-link mono record-pr-title">
+          {{.SlowestPR.RepoFullName}} #{{.SlowestPR.Number}}
+        </a>
+        <p class="record-pr-desc">{{.SlowestPR.Title}}</p>
+      </div>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
+  <!-- ── Charts ── -->
+  {{if or .ActivityJSON .SizeBucketJSON}}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  {{end}}
+
+  <!-- ── Activity Timeline ── -->
+  {{if .ActivityJSON}}
+  <section class="section">
+    <h2 class="section-title">Activity Over Time</h2>
+    <p class="chart-hint">Monthly PRs merged (authored) and reviews given. CR rate shows how often their own PRs received changes requested.</p>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-label">PRs authored vs. reviews given</div>
+        <div class="chart-wrap"><canvas id="uc-activity"></canvas></div>
+      </div>
+      <div class="chart-aside" id="uc-activity-aside"></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-label">Changes requested rate on own PRs (%)</div>
+        <div class="chart-wrap"><canvas id="uc-crrate"></canvas></div>
+      </div>
+      <div class="chart-aside" id="uc-crrate-aside"></div>
+    </div>
+  </section>
+  <script>
+  (function() {
+    var a = {{.ActivityJSON}};
+    if (!a.labels || !a.labels.length) return;
+    var tickColor = '#848d97', gridColor = '#30363d';
+    var baseX = { ticks: { color: tickColor, font: { size: 11 }, maxRotation: 45 }, grid: { color: gridColor } };
+    var baseY = function(cb) { var tk={color:tickColor,font:{size:11}}; if(cb)tk.callback=cb; return {ticks:tk,grid:{color:gridColor},beginAtZero:true}; };
+    var lineOpts = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { color: tickColor, font: { size: 11 }, boxWidth: 12 } } },
+      elements: { line: { tension: 0.3 }, point: { radius: 2, hoverRadius: 4 } }
+    };
+    var noLegend = Object.assign({}, lineOpts, { plugins: Object.assign({}, lineOpts.plugins, { legend: { display: false } }) });
+
+    new Chart(document.getElementById('uc-activity'), {
+      type: 'line',
+      data: { labels: a.labels, datasets: [
+        { label: 'PRs authored', data: a.prCounts,    borderColor: '#58a6ff', backgroundColor: '#58a6ff15', borderWidth: 2, fill: true },
+        { label: 'Reviews given', data: a.reviewCounts, borderColor: '#3fb950', backgroundColor: '#3fb95015', borderWidth: 2, fill: true }
+      ]},
+      options: Object.assign({}, lineOpts, { scales: { x: baseX, y: baseY() } })
+    });
+    new Chart(document.getElementById('uc-crrate'), {
+      type: 'line',
+      data: { labels: a.labels, datasets: [
+        { data: a.crRate, borderColor: '#f85149', backgroundColor: '#f8514915', borderWidth: 2, fill: true }
+      ]},
+      options: Object.assign({}, noLegend, { scales: { x: baseX, y: { min: 0, max: 100, ticks: { color: tickColor, font: { size: 11 }, callback: function(v) { return v + '%'; } }, grid: { color: gridColor } } } })
+    });
+
+    // Sidebar stat cards
+    var n = a.labels.length, first = a.labels[0], latest = a.labels[n-1];
+    function statCard(num, lbl) {
+      var d = document.createElement('div'); d.className = 'chart-stat';
+      var s1 = document.createElement('span'); s1.className = 'chart-stat-num'; s1.textContent = num;
+      var s2 = document.createElement('span'); s2.className = 'chart-stat-label'; s2.textContent = lbl;
+      d.appendChild(s1); d.appendChild(s2); return d;
+    }
+    var actAside = document.getElementById('uc-activity-aside');
+    actAside.appendChild(statCard(a.prCounts[n-1] + ' PRs', 'authored, ' + latest));
+    actAside.appendChild(statCard(a.reviewCounts[n-1] + ' reviews', 'given, ' + latest));
+    actAside.appendChild(statCard(Math.max.apply(null, a.prCounts) + ' PRs', 'peak month authored'));
+    actAside.appendChild(statCard(Math.max.apply(null, a.reviewCounts) + ' reviews', 'peak month reviewed'));
+
+    var crAside = document.getElementById('uc-crrate-aside');
+    crAside.appendChild(statCard(a.crRate[n-1] + '%', 'CR rate, ' + latest));
+    crAside.appendChild(statCard(a.crRate[0] + '%', 'CR rate, ' + first));
+  })();
+  </script>
+  {{end}}
+
+  <!-- ── PR Size Distribution ── -->
+  {{if .SizeBucketJSON}}
+  <section class="section">
+    <h2 class="section-title">PR Size Distribution</h2>
+    <p class="chart-hint">How big are their PRs? Lines changed (additions + deletions) grouped into buckets.</p>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-label">Merged PRs by size bucket</div>
+        <div class="chart-wrap"><canvas id="uc-size"></canvas></div>
+      </div>
+      <div class="chart-aside" id="uc-size-aside"></div>
+    </div>
+  </section>
+  <script>
+  (function() {
+    var s = {{.SizeBucketJSON}};
+    if (!s.labels || !s.labels.length) return;
+    var tickColor = '#848d97', gridColor = '#30363d';
+    var opts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor } },
+        y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, beginAtZero: true }
+      }
+    };
+    new Chart(document.getElementById('uc-size'), {
+      type: 'bar',
+      data: { labels: s.labels, datasets: [{ data: s.prCounts, backgroundColor: '#58a6ff33', borderColor: '#58a6ff', borderWidth: 1 }] },
+      options: opts
+    });
+    function bucketTable(vals, suffix) {
+      var t = document.createElement('table'); t.className = 'bucket-tbl';
+      for (var i = 0; i < s.labels.length; i++) {
+        var tr = document.createElement('tr'),
+            td1 = document.createElement('td'),
+            td2 = document.createElement('td');
+        td1.textContent = s.labels[i]; td2.textContent = vals[i] + (suffix || '');
+        tr.appendChild(td1); tr.appendChild(td2); t.appendChild(tr);
+      }
+      return t;
+    }
+    document.getElementById('uc-size-aside').appendChild(bucketTable(s.prCounts, ' PRs'));
+  })();
+  </script>
+  {{end}}
+
+  <!-- ── Collaborators ── -->
+  {{if or .ReviewersOfMe .AuthorsIReview}}
+  <section class="section">
+    <h2 class="section-title">Collaborators</h2>
+    <div class="two-col">
+
+      {{if .ReviewersOfMe}}
+      <div class="col-card">
+        <h3 class="col-title">Reviews my PRs most</h3>
+        <div class="board-rows">
+          {{range $i, $c := .ReviewersOfMe}}
+          <a href="/user/{{$c.Login}}" class="board-row">
+            <span class="board-rank {{rankClass (add $i 1)}}">{{rankBadge (add $i 1)}}</span>
+            {{if $c.AvatarURL}}<img src="{{$c.AvatarURL}}" class="board-avatar" alt="" />{{end}}
+            <span class="board-name mono">@{{$c.Login}}</span>
+            <span class="board-val">{{formatNumber $c.Count}} reviews</span>
+          </a>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+
+      {{if .AuthorsIReview}}
+      <div class="col-card">
+        <h3 class="col-title">I review most</h3>
+        <div class="board-rows">
+          {{range $i, $c := .AuthorsIReview}}
+          <a href="/user/{{$c.Login}}" class="board-row">
+            <span class="board-rank {{rankClass (add $i 1)}}">{{rankBadge (add $i 1)}}</span>
+            {{if $c.AvatarURL}}<img src="{{$c.AvatarURL}}" class="board-avatar" alt="" />{{end}}
+            <span class="board-name mono">@{{$c.Login}}</span>
+            <span class="board-val">{{formatNumber $c.Count}} reviews</span>
+          </a>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+
+    </div>
+  </section>
+  {{end}}
+
+  <!-- ── Top Reviewed Repos ── -->
+  {{if .ReviewedRepos}}
+  <section class="section">
+    <h2 class="section-title">Repos Reviewed Most</h2>
+    <table class="pr-table">
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th>Reviews Given</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ReviewedRepos}}
+        <tr class="pr-row">
+          <td><a href="/repo/{{.FullName}}" class="pr-link mono">{{.FullName}}</a></td>
+          <td>{{formatNumber .Count}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+  {{end}}
+
+  <!-- ── Contributed Repos (authored) ── -->
   {{if .ContributedRepos}}
   <section class="section">
-    <h2 class="section-title">Repos</h2>
+    <h2 class="section-title">Repos Contributed To</h2>
     <table class="pr-table">
       <thead>
         <tr>

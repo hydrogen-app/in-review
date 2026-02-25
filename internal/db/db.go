@@ -89,13 +89,49 @@ type ReviewerStats struct {
 	Approvals        int
 	ChangesRequested int
 	Comments         int
+	LastReviewedAt   *time.Time
 }
 
 type AuthorStats struct {
-	Login            string
-	TotalPRs         int
-	MergedPRs        int
-	AvgMergeTimeSecs int64
+	Login               string
+	TotalPRs            int
+	MergedPRs           int
+	AvgMergeTimeSecs    int64
+	TotalLinesWritten   int64
+	AvgPRSize           float64
+	CleanApprovalRate   float64
+	AvgChangesRequested float64
+	AvgFirstReviewSecs  float64
+	MedFirstReviewSecs  float64
+}
+
+// UserActivityPoint holds one month's author + reviewer activity for a user.
+type UserActivityPoint struct {
+	Label               string
+	PRCount             int
+	ReviewCount         int
+	ChangesRequestedRate float64
+}
+
+// CollabEntry is a collaborator with a review count (reviewer of my PRs, or author I review).
+type CollabEntry struct {
+	Login     string
+	AvatarURL string
+	Count     int
+}
+
+// UserRepoReview is a repo the user has reviewed PRs in, with a count.
+type UserRepoReview struct {
+	FullName string
+	Count    int
+}
+
+// UserRecordPR is a single PR representing a personal record (fastest or slowest merge).
+type UserRecordPR struct {
+	Number        int
+	RepoFullName  string
+	MergeTimeSecs int64
+	Title         string
 }
 
 // ── Constructor ────────────────────────────────────────────────────────────────
@@ -556,12 +592,13 @@ func (d *DB) UserReviewerStats(login string) (*ReviewerStats, error) {
 		       COUNT(*),
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END),
-		       SUM(CASE WHEN r.state='COMMENTED'         THEN 1 ELSE 0 END)
+		       SUM(CASE WHEN r.state='COMMENTED'         THEN 1 ELSE 0 END),
+		       MAX(r.submitted_at)
 		FROM reviews r
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE r.reviewer_login=$1
 		GROUP BY r.reviewer_login
-	`, login).Scan(&s.AvatarURL, &s.TotalReviews, &s.Approvals, &s.ChangesRequested, &s.Comments)
+	`, login).Scan(&s.AvatarURL, &s.TotalReviews, &s.Approvals, &s.ChangesRequested, &s.Comments, &s.LastReviewedAt)
 	if err == sql.ErrNoRows {
 		return s, nil
 	}
@@ -571,12 +608,33 @@ func (d *DB) UserReviewerStats(login string) (*ReviewerStats, error) {
 func (d *DB) UserAuthorStats(login string) (*AuthorStats, error) {
 	s := &AuthorStats{Login: login}
 	err := d.conn.QueryRow(`
-		SELECT COUNT(*),
-		       SUM(CASE WHEN merged=TRUE THEN 1 ELSE 0 END),
-		       COALESCE(AVG(CASE WHEN merged=TRUE THEN merge_time_secs END)::BIGINT, 0)
+		SELECT
+			COUNT(*),
+			SUM(CASE WHEN merged=TRUE THEN 1 ELSE 0 END),
+			COALESCE(AVG(CASE WHEN merged=TRUE THEN merge_time_secs END)::BIGINT, 0),
+			COALESCE(SUM(CASE WHEN merged=TRUE THEN additions + deletions ELSE 0 END)::BIGINT, 0),
+			COALESCE(AVG(CASE WHEN merged=TRUE THEN (additions + deletions) END)::FLOAT, 0),
+			COALESCE(
+				100.0 * SUM(CASE WHEN merged=TRUE AND changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END)::FLOAT /
+				NULLIF(SUM(CASE WHEN merged=TRUE AND review_count>0 THEN 1 ELSE 0 END), 0),
+				0
+			),
+			COALESCE(AVG(CASE WHEN merged=TRUE THEN changes_requested_count END)::FLOAT, 0),
+			COALESCE(AVG(CASE WHEN merged=TRUE AND first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM first_review_at) - EXTRACT(EPOCH FROM opened_at))
+				END)::FLOAT, 0),
+			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY
+				CASE WHEN merged=TRUE AND first_review_at IS NOT NULL
+				THEN GREATEST(0, EXTRACT(EPOCH FROM first_review_at) - EXTRACT(EPOCH FROM opened_at))
+				END), 0)
 		FROM pull_requests
 		WHERE author_login=$1
-	`, login).Scan(&s.TotalPRs, &s.MergedPRs, &s.AvgMergeTimeSecs)
+	`, login).Scan(
+		&s.TotalPRs, &s.MergedPRs, &s.AvgMergeTimeSecs,
+		&s.TotalLinesWritten, &s.AvgPRSize,
+		&s.CleanApprovalRate, &s.AvgChangesRequested,
+		&s.AvgFirstReviewSecs, &s.MedFirstReviewSecs,
+	)
 	if err == sql.ErrNoRows {
 		return s, nil
 	}
@@ -902,6 +960,177 @@ func (d *DB) UserContributedRepos(login string, limit int) ([]Repo, error) {
 	}
 	defer rows.Close()
 	return scanRepos(rows)
+}
+
+// UserRecordPRs returns the fastest and slowest merged PRs for a user.
+func (d *DB) UserRecordPRs(login string) (fastest, slowest *UserRecordPR, err error) {
+	q := `
+		SELECT number, repo_full_name, merge_time_secs, title
+		FROM pull_requests
+		WHERE author_login=$1 AND merged=TRUE AND merge_time_secs > 0
+		ORDER BY merge_time_secs %s
+		LIMIT 1
+	`
+	var f, s UserRecordPR
+	if err2 := d.conn.QueryRow(fmt.Sprintf(q, "ASC"), login).Scan(&f.Number, &f.RepoFullName, &f.MergeTimeSecs, &f.Title); err2 == nil {
+		fastest = &f
+	}
+	if err2 := d.conn.QueryRow(fmt.Sprintf(q, "DESC"), login).Scan(&s.Number, &s.RepoFullName, &s.MergeTimeSecs, &s.Title); err2 == nil {
+		slowest = &s
+	}
+	return fastest, slowest, nil
+}
+
+// UserActivitySeries returns monthly counts of PRs authored and reviews given.
+func (d *DB) UserActivitySeries(login string) ([]UserActivityPoint, error) {
+	rows, err := d.conn.Query(`
+		WITH pr_months AS (
+			SELECT DATE_TRUNC('month', merged_at) AS month,
+			       TO_CHAR(DATE_TRUNC('month', merged_at), 'Mon YYYY') AS label,
+			       COUNT(*) AS pr_count,
+			       COALESCE(
+			           100.0 * SUM(CASE WHEN changes_requested_count > 0 THEN 1 ELSE 0 END)::FLOAT /
+			           NULLIF(COUNT(*), 0), 0
+			       ) AS cr_rate
+			FROM pull_requests
+			WHERE author_login=$1 AND merged=TRUE AND merged_at IS NOT NULL
+			GROUP BY DATE_TRUNC('month', merged_at)
+		),
+		review_months AS (
+			SELECT DATE_TRUNC('month', submitted_at) AS month,
+			       COUNT(*) AS review_count
+			FROM reviews
+			WHERE reviewer_login=$1 AND submitted_at IS NOT NULL
+			GROUP BY DATE_TRUNC('month', submitted_at)
+		)
+		SELECT
+			COALESCE(p.label, TO_CHAR(r.month, 'Mon YYYY')) AS label,
+			COALESCE(p.pr_count, 0)     AS pr_count,
+			COALESCE(r.review_count, 0) AS review_count,
+			COALESCE(p.cr_rate, 0)      AS cr_rate
+		FROM pr_months p
+		FULL OUTER JOIN review_months r ON p.month = r.month
+		ORDER BY COALESCE(p.month, r.month)
+	`, login)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserActivityPoint
+	for rows.Next() {
+		var p UserActivityPoint
+		if err := rows.Scan(&p.Label, &p.PRCount, &p.ReviewCount, &p.ChangesRequestedRate); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// UserTopCollaborators returns the top reviewers of a user's PRs and the top
+// authors whose PRs the user reviews most, each limited to `limit` entries.
+func (d *DB) UserTopCollaborators(login string, limit int) (reviewersOfMe, authorsIReview []CollabEntry, err error) {
+	reviewQ := `
+		SELECT rv.reviewer_login, COALESCE(u.avatar_url,''), COUNT(*) AS cnt
+		FROM reviews rv
+		JOIN pull_requests pr
+		  ON rv.repo_full_name = pr.repo_full_name AND rv.pr_number = pr.number
+		LEFT JOIN users u ON u.login = rv.reviewer_login
+		WHERE pr.author_login = $1 AND rv.reviewer_login != $1
+		GROUP BY rv.reviewer_login, u.avatar_url
+		ORDER BY cnt DESC
+		LIMIT $2
+	`
+	rows, err := d.conn.Query(reviewQ, login, limit)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var e CollabEntry
+			if err2 := rows.Scan(&e.Login, &e.AvatarURL, &e.Count); err2 == nil {
+				reviewersOfMe = append(reviewersOfMe, e)
+			}
+		}
+	}
+
+	authorQ := `
+		SELECT pr.author_login, COALESCE(u.avatar_url,''), COUNT(*) AS cnt
+		FROM reviews rv
+		JOIN pull_requests pr
+		  ON rv.repo_full_name = pr.repo_full_name AND rv.pr_number = pr.number
+		LEFT JOIN users u ON u.login = pr.author_login
+		WHERE rv.reviewer_login = $1 AND pr.author_login != $1
+		GROUP BY pr.author_login, u.avatar_url
+		ORDER BY cnt DESC
+		LIMIT $2
+	`
+	rows2, err2 := d.conn.Query(authorQ, login, limit)
+	if err2 == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var e CollabEntry
+			if err3 := rows2.Scan(&e.Login, &e.AvatarURL, &e.Count); err3 == nil {
+				authorsIReview = append(authorsIReview, e)
+			}
+		}
+	}
+	return reviewersOfMe, authorsIReview, nil
+}
+
+// UserTopReviewedRepos returns the repos a user has reviewed the most PRs in.
+func (d *DB) UserTopReviewedRepos(login string, limit int) ([]UserRepoReview, error) {
+	rows, err := d.conn.Query(`
+		SELECT repo_full_name, COUNT(*) AS cnt
+		FROM reviews
+		WHERE reviewer_login=$1
+		GROUP BY repo_full_name
+		ORDER BY cnt DESC
+		LIMIT $2
+	`, login, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRepoReview
+	for rows.Next() {
+		var r UserRepoReview
+		if err := rows.Scan(&r.FullName, &r.Count); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UserPRSizeDist returns the distribution of a user's merged PRs across size buckets.
+func (d *DB) UserPRSizeDist(login string) ([]PRSizeBucket, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			CASE
+				WHEN additions+deletions <=   50 THEN '≤50'
+				WHEN additions+deletions <=  200 THEN '51–200'
+				WHEN additions+deletions <=  500 THEN '201–500'
+				WHEN additions+deletions <= 1000 THEN '501–1k'
+				ELSE '1k+'
+			END AS bucket,
+			COUNT(*) AS pr_count
+		FROM pull_requests
+		WHERE author_login=$1 AND merged=TRUE AND (additions+deletions) > 0
+		GROUP BY bucket
+		ORDER BY MIN(additions+deletions)
+	`, login)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PRSizeBucket
+	for rows.Next() {
+		var b PRSizeBucket
+		if err := rows.Scan(&b.Label, &b.PRCount); err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 func (d *DB) SearchRepos(query string, limit int) ([]Repo, error) {

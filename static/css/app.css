@@ -500,6 +500,11 @@ p  { margin: 0 0 0.5rem; }
 .approval-fill     { height: 100%; background: var(--green); }
 .approval-label    { font-size: 0.68rem; color: var(--muted); white-space: nowrap; }
 
+/* ── Record PRs ──────────────────────────────────────────────── */
+.record-pr-title { display: block; font-size: 0.78rem; margin-top: 0.4rem; color: var(--accent); text-decoration: none; }
+.record-pr-title:hover { text-decoration: underline; }
+.record-pr-desc  { font-size: 0.75rem; color: var(--muted); margin: 0.2rem 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ── Repo chips ───────────────────────────────────────────────── */
 .repo-chip {
   display: flex;

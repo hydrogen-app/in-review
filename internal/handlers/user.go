@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"time"
@@ -10,6 +12,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"inreview/internal/db"
 )
+
+type userActivityPayload struct {
+	Labels      []string  `json:"labels"`
+	PRCounts    []int     `json:"prCounts"`
+	ReviewCounts []int    `json:"reviewCounts"`
+	CRRate      []float64 `json:"crRate"`
+}
+
+type userSizePayload struct {
+	Labels   []string `json:"labels"`
+	PRCounts []int    `json:"prCounts"`
+}
 
 type UserData struct {
 	BaseData
@@ -20,6 +34,13 @@ type UserData struct {
 	GatekeeperRank   int
 	AuthorRank       int
 	ContributedRepos []db.Repo
+	FastestPR        *db.UserRecordPR
+	SlowestPR        *db.UserRecordPR
+	ActivityJSON     template.JS
+	SizeBucketJSON   template.JS
+	ReviewedRepos    []db.UserRepoReview
+	ReviewersOfMe    []db.CollabEntry
+	AuthorsIReview   []db.CollabEntry
 	IsOrg            bool
 	IsNGMI           bool
 	OGTitle          string
@@ -106,17 +127,112 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	data := UserData{
-		User:  user,
-		IsOrg: false,
+	type rrRes struct {
+		v   *db.ReviewerStats
+		err error
 	}
-	data.ReviewerStats, _ = h.db.UserReviewerStats(username)
-	data.AuthorStats, _ = h.db.UserAuthorStats(username)
-	data.ReviewerRank, _ = h.db.UserReviewerRank(username)
-	data.GatekeeperRank, _ = h.db.UserGatekeeperRank(username)
-	data.AuthorRank, _ = h.db.UserAuthorRank(username)
-	data.ContributedRepos, _ = h.db.UserContributedRepos(username, 10)
+	type arRes struct {
+		v   *db.AuthorStats
+		err error
+	}
+	type recRes struct {
+		fastest, slowest *db.UserRecordPR
+	}
+	type actRes struct {
+		v   []db.UserActivityPoint
+		err error
+	}
+	type sizeRes struct {
+		v   []db.PRSizeBucket
+		err error
+	}
+	type collabRes struct {
+		reviewersOfMe  []db.CollabEntry
+		authorsIReview []db.CollabEntry
+	}
+	type reviewedReposRes struct {
+		v   []db.UserRepoReview
+		err error
+	}
+
+	rrCh   := make(chan rrRes, 1)
+	arCh   := make(chan arRes, 1)
+	rrankCh := make(chan int, 1)
+	gkCh   := make(chan int, 1)
+	auCh   := make(chan int, 1)
+	contCh := make(chan []db.Repo, 1)
+	recCh  := make(chan recRes, 1)
+	actCh  := make(chan actRes, 1)
+	sizeCh := make(chan sizeRes, 1)
+	colCh  := make(chan collabRes, 1)
+	rvRepCh := make(chan reviewedReposRes, 1)
+
+	go func() { v, err := h.db.UserReviewerStats(username); rrCh <- rrRes{v, err} }()
+	go func() { v, err := h.db.UserAuthorStats(username); arCh <- arRes{v, err} }()
+	go func() { v, _ := h.db.UserReviewerRank(username); rrankCh <- v }()
+	go func() { v, _ := h.db.UserGatekeeperRank(username); gkCh <- v }()
+	go func() { v, _ := h.db.UserAuthorRank(username); auCh <- v }()
+	go func() { v, _ := h.db.UserContributedRepos(username, 10); contCh <- v }()
+	go func() {
+		f, s, _ := h.db.UserRecordPRs(username)
+		recCh <- recRes{f, s}
+	}()
+	go func() { v, err := h.db.UserActivitySeries(username); actCh <- actRes{v, err} }()
+	go func() { v, err := h.db.UserPRSizeDist(username); sizeCh <- sizeRes{v, err} }()
+	go func() {
+		rm, ai, _ := h.db.UserTopCollaborators(username, 5)
+		colCh <- collabRes{rm, ai}
+	}()
+	go func() { v, err := h.db.UserTopReviewedRepos(username, 8); rvRepCh <- reviewedReposRes{v, err} }()
+
+	rrResult   := <-rrCh
+	arResult   := <-arCh
+	rec        := <-recCh
+	act        := <-actCh
+	sizeResult := <-sizeCh
+	col        := <-colCh
+	rvRep      := <-rvRepCh
+
+	data := UserData{
+		User:           user,
+		IsOrg:          false,
+		ReviewerStats:  rrResult.v,
+		AuthorStats:    arResult.v,
+		ReviewerRank:   <-rrankCh,
+		GatekeeperRank: <-gkCh,
+		AuthorRank:     <-auCh,
+		ContributedRepos: <-contCh,
+		FastestPR:      rec.fastest,
+		SlowestPR:      rec.slowest,
+		ReviewersOfMe:  col.reviewersOfMe,
+		AuthorsIReview: col.authorsIReview,
+		ReviewedRepos:  rvRep.v,
+	}
 	data.IsNGMI = data.ReviewerStats == nil || data.ReviewerStats.TotalReviews < 10
+
+	if len(act.v) > 0 {
+		ap := userActivityPayload{}
+		for _, p := range act.v {
+			ap.Labels = append(ap.Labels, p.Label)
+			ap.PRCounts = append(ap.PRCounts, p.PRCount)
+			ap.ReviewCounts = append(ap.ReviewCounts, p.ReviewCount)
+			ap.CRRate = append(ap.CRRate, roundTo1(p.ChangesRequestedRate))
+		}
+		if raw, err := json.Marshal(ap); err == nil {
+			data.ActivityJSON = template.JS(raw)
+		}
+	}
+
+	if len(sizeResult.v) > 0 {
+		sp := userSizePayload{}
+		for _, b := range sizeResult.v {
+			sp.Labels = append(sp.Labels, b.Label)
+			sp.PRCounts = append(sp.PRCounts, b.PRCount)
+		}
+		if raw, err := json.Marshal(sp); err == nil {
+			data.SizeBucketJSON = template.JS(raw)
+		}
+	}
 
 	// ── OG / share metadata ───────────────────────────────────────────────────
 	data.OGUrl = "https://ngmi.review/user/" + username
