@@ -147,25 +147,25 @@
           <span class="col-stat-label">Total Lines Written</span>
         </div>
         {{end}}
-        {{if gt .AvgPRSize 0}}
+        {{if gt .AvgPRSize 0.0}}
         <div class="col-stat">
           <span class="col-stat-num">{{formatNumber (floatToInt .AvgPRSize)}}</span>
           <span class="col-stat-label">Avg PR Size (lines)</span>
         </div>
         {{end}}
-        {{if gt .CleanApprovalRate 0}}
+        {{if gt .CleanApprovalRate 0.0}}
         <div class="col-stat">
           <span class="col-stat-num green">{{printf "%.0f" .CleanApprovalRate}}%</span>
           <span class="col-stat-label">Clean Approval Rate</span>
         </div>
         {{end}}
-        {{if gt .AvgChangesRequested 0}}
+        {{if gt .AvgChangesRequested 0.0}}
         <div class="col-stat">
           <span class="col-stat-num warn">{{printf "%.1f" .AvgChangesRequested}}×</span>
           <span class="col-stat-label">Avg Changes Requested</span>
         </div>
         {{end}}
-        {{if gt .AvgFirstReviewSecs 0}}
+        {{if gt .AvgFirstReviewSecs 0.0}}
         <div class="col-stat">
           <span class="col-stat-num">{{formatDuration (floatToInt64 .AvgFirstReviewSecs)}}</span>
           <span class="col-stat-label">Avg Wait for First Review</span>
