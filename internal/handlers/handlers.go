@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"inreview/internal/analytics"
 	"inreview/internal/config"
 	"inreview/internal/db"
 	"inreview/internal/github"
@@ -68,6 +69,27 @@ func (h *Handler) SessionLoader(next http.Handler) http.Handler {
 	})
 }
 
+// TrackPageViews is a middleware that captures PostHog page_viewed events for
+// full-page GET requests. HTMX partial requests (HX-Request header present)
+// are skipped so only meaningful navigations are tracked.
+func (h *Handler) TrackPageViews(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if r.Method != http.MethodGet || r.Header.Get("HX-Request") != "" {
+			return
+		}
+		user := currentUser(r)
+		distinctID := user
+		if distinctID == "" {
+			distinctID = "anonymous"
+		}
+		h.analytics.Capture(distinctID, "page_viewed", map[string]interface{}{
+			"path":         r.URL.Path,
+			"$current_url": r.URL.String(),
+		})
+	})
+}
+
 // RequireAuth wraps a handler and redirects unauthenticated users to /auth/github.
 func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -81,22 +103,24 @@ func (h *Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 // Handler holds all dependencies and parsed templates.
 type Handler struct {
-	db      *db.DB
-	gh      *github.Client
-	worker  *worker.Worker
-	cache   *rdb.Client
-	cfg     *config.Config
-	tmpls   map[string]*template.Template
-	funcMap template.FuncMap
+	db        *db.DB
+	gh        *github.Client
+	worker    *worker.Worker
+	cache     *rdb.Client
+	cfg       *config.Config
+	analytics *analytics.Client
+	tmpls     map[string]*template.Template
+	funcMap   template.FuncMap
 }
 
-func New(database *db.DB, gh *github.Client, w *worker.Worker, cache *rdb.Client, cfg *config.Config) *Handler {
+func New(database *db.DB, gh *github.Client, w *worker.Worker, cache *rdb.Client, cfg *config.Config, a *analytics.Client) *Handler {
 	h := &Handler{
-		db:     database,
-		gh:     gh,
-		worker: w,
-		cache:  cache,
-		cfg:    cfg,
+		db:        database,
+		gh:        gh,
+		worker:    w,
+		cache:     cache,
+		cfg:       cfg,
+		analytics: a,
 	}
 	h.funcMap = template.FuncMap{
 		"formatDuration":      formatDuration,

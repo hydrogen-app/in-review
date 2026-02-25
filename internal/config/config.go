@@ -18,6 +18,7 @@ type Config struct {
 	GitHubOAuthClientSecret string
 	SessionSecret           string
 	BaseURL                 string
+	PostHogAPIKey           string
 }
 
 func Load() *Config {
@@ -51,5 +52,6 @@ func Load() *Config {
 		GitHubOAuthClientSecret: os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"),
 		SessionSecret:           os.Getenv("SESSION_SECRET"),
 		BaseURL:                 baseURL,
+		PostHogAPIKey:           os.Getenv("POSTHOG_API_KEY"),
 	}
 }

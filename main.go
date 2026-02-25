@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 
+	"inreview/internal/analytics"
 	"inreview/internal/config"
 	"inreview/internal/db"
 	"inreview/internal/github"
@@ -43,12 +44,16 @@ func main() {
 	// GitHub client
 	ghClient := github.NewClient(cfg.GitHubToken)
 
+	// Analytics
+	ph := analytics.New(cfg.PostHogAPIKey)
+	defer ph.Close()
+
 	// Sync worker
 	w := worker.New(ghClient, database, cache, cfg.GitHubAppID, cfg.GitHubAppPrivateKey)
 	w.Start()
 
 	// HTTP router
-	h := handlers.New(database, ghClient, w, cache, cfg)
+	h := handlers.New(database, ghClient, w, cache, cfg, ph)
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -56,6 +61,7 @@ func main() {
 	r.Use(middleware.Compress(5))
 	r.Use(cache.RateLimit(300, time.Minute))
 	r.Use(h.SessionLoader)
+	r.Use(h.TrackPageViews)
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
