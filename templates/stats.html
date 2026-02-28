@@ -52,6 +52,9 @@
       <button class="range-btn"        data-range="120" onclick="ngmiSetRange(120)">10Y</button>
     </div>
     {{end}}
+    <div class="avg-toggle-ctrl">
+      <button type="button" class="range-btn active" id="avg-toggle-btn" onclick="ngmiToggleAvg()">Avg</button>
+    </div>
     <div class="trim-ctrl">
       <span>Trim top</span>
       <output id="trim-val">{{.Trim}}</output><span>% outliers</span>
@@ -289,6 +292,20 @@
       Chart.getChart('tc-loc')
     ];
     var allSeries = [[t.avgSize,t.medianSize],[t.avgHours,t.medianHours],[t.changesRequestedRate],[t.prCounts],[t.openedCounts],[t.mergeVsOpenRate],[t.avgFirstReviewHours,t.medFirstReviewHours],[t.unreviewedMergeRate],[t.linesPerContrib]];
+    var showAvg = true;
+    var avgChartIds = ['tc-size', 'tc-time', 'tc-first-review'];
+    window.ngmiToggleAvg = function() {
+      showAvg = !showAvg;
+      avgChartIds.forEach(function(id) {
+        var c = Chart.getChart(id);
+        if (!c) return;
+        c.data.datasets[0].hidden = !showAvg;
+        c.update();
+      });
+      var btn = document.getElementById('avg-toggle-btn');
+      btn.classList.toggle('active', showAvg);
+      btn.textContent = showAvg ? 'Avg' : 'Avg (hidden)';
+    };
     window.ngmiSetRange = function(n) {
       window._ngmiRange = n;
       var start = n > 0 ? Math.max(0, t.labels.length - n) : 0;
