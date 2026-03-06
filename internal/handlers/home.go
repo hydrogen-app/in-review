@@ -29,69 +29,118 @@ type HomeData struct {
 	OGUrl           string
 }
 
-// homeLBCache holds the six mini-leaderboard slices rendered on the home page.
-type homeLBCache struct {
-	SpeedDemons []db.LeaderboardEntry
-	PRGraveyard []db.LeaderboardEntry
+// homeCache holds all data rendered on the home page.
+type homeCache struct {
+	TotalRepos   int
+	TotalPRs     int
+	TotalReviews int
+	SpeedDemons  []db.LeaderboardEntry
+	PRGraveyard  []db.LeaderboardEntry
 	ReviewChamps []db.LeaderboardEntry
 	Gatekeepers  []db.LeaderboardEntry
 	MergeMasters []db.LeaderboardEntry
 	OneShot      []db.LeaderboardEntry
+	PopularVisits []db.PageVisit
+	RecentVisits  []db.PageVisit
 }
 
-const homeLBCacheKey = "home:lb"
-const homeLBCacheTTL = 3 * time.Minute
+const homeCacheKey = "home:v2"
+const homeCacheTTL = 3 * time.Minute
 
 func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
-	data := HomeData{}
-	data.TotalRepos, data.TotalPRs, data.TotalReviews = h.db.TotalStats()
-
 	ctx := context.Background()
-	var lb homeLBCache
-	if raw, ok := h.cache.Get(ctx, homeLBCacheKey); ok {
-		_ = json.Unmarshal(raw, &lb)
+	var hc homeCache
+	if raw, ok := h.cache.Get(ctx, homeCacheKey); ok {
+		_ = json.Unmarshal(raw, &hc)
 	} else {
-		var err error
-		lb.SpeedDemons, _ = h.db.LeaderboardReposBySpeed("ASC", 5)
-		lb.PRGraveyard, _ = h.db.LeaderboardReposBySpeed("DESC", 5)
-		lb.ReviewChamps, err = h.db.LeaderboardReviewers(5)
-		if err != nil {
-			log.Printf("home: LeaderboardReviewers error: %v", err)
+		// Run all queries in parallel.
+		type lbResult struct {
+			entries []db.LeaderboardEntry
+			err     error
 		}
-		lb.Gatekeepers, err = h.db.LeaderboardGatekeepers(5)
-		if err != nil {
-			log.Printf("home: LeaderboardGatekeepers error: %v", err)
+		type statsResult struct{ repos, prs, reviews int }
+		type visitsResult struct{ popular, recent []db.PageVisit }
+
+		statsCh    := make(chan statsResult, 1)
+		speedCh    := make(chan lbResult, 1)
+		graveCh    := make(chan lbResult, 1)
+		champsCh   := make(chan lbResult, 1)
+		gatesCh    := make(chan lbResult, 1)
+		mastersCh  := make(chan lbResult, 1)
+		oneShotCh  := make(chan lbResult, 1)
+		visitsCh   := make(chan visitsResult, 1)
+
+		go func() {
+			r, p, rv := h.db.TotalStats()
+			statsCh <- statsResult{r, p, rv}
+		}()
+		go func() { v, e := h.db.LeaderboardReposBySpeed("ASC", 5); speedCh <- lbResult{v, e} }()
+		go func() { v, e := h.db.LeaderboardReposBySpeed("DESC", 5); graveCh <- lbResult{v, e} }()
+		go func() { v, e := h.db.LeaderboardReviewers(5); champsCh <- lbResult{v, e} }()
+		go func() { v, e := h.db.LeaderboardGatekeepers(5); gatesCh <- lbResult{v, e} }()
+		go func() { v, e := h.db.LeaderboardAuthors(5); mastersCh <- lbResult{v, e} }()
+		go func() { v, e := h.db.LeaderboardCleanApprovals(5); oneShotCh <- lbResult{v, e} }()
+		go func() {
+			popular, _ := h.db.PopularVisits(3)
+			var exclude []string
+			for _, v := range popular {
+				exclude = append(exclude, v.Path)
+			}
+			recent, _ := h.db.RecentVisits(5, exclude)
+			visitsCh <- visitsResult{popular, recent}
+		}()
+
+		stats   := <-statsCh
+		speed   := <-speedCh
+		grave   := <-graveCh
+		champs  := <-champsCh
+		gates   := <-gatesCh
+		masters := <-mastersCh
+		oneshot := <-oneShotCh
+		visits  := <-visitsCh
+
+		if champs.err != nil {
+			log.Printf("home: LeaderboardReviewers error: %v", champs.err)
 		}
-		lb.MergeMasters, err = h.db.LeaderboardAuthors(5)
-		if err != nil {
-			log.Printf("home: LeaderboardAuthors error: %v", err)
+		if gates.err != nil {
+			log.Printf("home: LeaderboardGatekeepers error: %v", gates.err)
 		}
-		lb.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
-		if raw, err := json.Marshal(lb); err == nil {
-			h.cache.Set(ctx, homeLBCacheKey, raw, homeLBCacheTTL)
+		if masters.err != nil {
+			log.Printf("home: LeaderboardAuthors error: %v", masters.err)
+		}
+
+		hc = homeCache{
+			TotalRepos:    stats.repos,
+			TotalPRs:      stats.prs,
+			TotalReviews:  stats.reviews,
+			SpeedDemons:   speed.entries,
+			PRGraveyard:   grave.entries,
+			ReviewChamps:  champs.entries,
+			Gatekeepers:   gates.entries,
+			MergeMasters:  masters.entries,
+			OneShot:       oneshot.entries,
+			PopularVisits: visits.popular,
+			RecentVisits:  visits.recent,
+		}
+		if raw, err := json.Marshal(hc); err == nil {
+			h.cache.Set(ctx, homeCacheKey, raw, homeCacheTTL)
 		}
 	}
-	data.SpeedDemons = lb.SpeedDemons
-	data.PRGraveyard = lb.PRGraveyard
-	data.ReviewChamps = lb.ReviewChamps
-	data.Gatekeepers = lb.Gatekeepers
-	data.MergeMasters = lb.MergeMasters
-	data.OneShot = lb.OneShot
 
-
+	data := HomeData{
+		TotalRepos:    hc.TotalRepos,
+		TotalPRs:      hc.TotalPRs,
+		TotalReviews:  hc.TotalReviews,
+		SpeedDemons:   hc.SpeedDemons,
+		PRGraveyard:   hc.PRGraveyard,
+		ReviewChamps:  hc.ReviewChamps,
+		Gatekeepers:   hc.Gatekeepers,
+		MergeMasters:  hc.MergeMasters,
+		OneShot:       hc.OneShot,
+		PopularVisits: hc.PopularVisits,
+		RecentVisits:  hc.RecentVisits,
+	}
 	data.OGDesc = fmt.Sprintf("%d PRs analyzed across %d repos. Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.", data.TotalPRs, data.TotalRepos)
-
-	data.PopularVisits, _ = h.db.PopularVisits(3)
-	if len(data.PopularVisits) > 0 {
-		exclude := make([]string, len(data.PopularVisits))
-		for i, v := range data.PopularVisits {
-			exclude[i] = v.Path
-		}
-		data.RecentVisits, _ = h.db.RecentVisits(5, exclude)
-	} else {
-		data.RecentVisits, _ = h.db.RecentVisits(5, nil)
-	}
-
 	data.BaseData = h.baseData(r)
 	h.render(w, "home", data)
 }

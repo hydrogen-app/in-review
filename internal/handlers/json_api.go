@@ -37,74 +37,34 @@ func (h *Handler) MeJSON(w http.ResponseWriter, r *http.Request) {
 // ── /api/v1/home ───────────────────────────────────────────────────────────────
 
 func (h *Handler) HomeJSON(w http.ResponseWriter, r *http.Request) {
-	totalRepos, totalPRs, totalReviews := h.db.TotalStats()
-
 	ctx := context.Background()
-	var lb homeLBCache
-	if raw, ok := h.cache.Get(ctx, homeLBCacheKey); ok {
-		_ = json.Unmarshal(raw, &lb)
-	} else {
-		lb.SpeedDemons, _ = h.db.LeaderboardReposBySpeed("ASC", 5)
-		lb.PRGraveyard, _ = h.db.LeaderboardReposBySpeed("DESC", 5)
-		lb.ReviewChamps, _ = h.db.LeaderboardReviewers(5)
-		lb.Gatekeepers, _ = h.db.LeaderboardGatekeepers(5)
-		lb.MergeMasters, _ = h.db.LeaderboardAuthors(5)
-		lb.OneShot, _ = h.db.LeaderboardCleanApprovals(5)
-		if raw, err := json.Marshal(lb); err == nil {
-			h.cache.Set(ctx, homeLBCacheKey, raw, homeLBCacheTTL)
-		}
+	var hc homeCache
+	if raw, ok := h.cache.Get(ctx, homeCacheKey); ok {
+		_ = json.Unmarshal(raw, &hc)
 	}
-
-	popularVisits, _ := h.db.PopularVisits(3)
-	var recentVisits []db.PageVisit
-	if len(popularVisits) > 0 {
-		exclude := make([]string, len(popularVisits))
-		for i, v := range popularVisits {
-			exclude[i] = v.Path
-		}
-		recentVisits, _ = h.db.RecentVisits(5, exclude)
-	} else {
-		recentVisits, _ = h.db.RecentVisits(5, nil)
-	}
-
-	if lb.SpeedDemons == nil {
-		lb.SpeedDemons = []db.LeaderboardEntry{}
-	}
-	if lb.PRGraveyard == nil {
-		lb.PRGraveyard = []db.LeaderboardEntry{}
-	}
-	if lb.ReviewChamps == nil {
-		lb.ReviewChamps = []db.LeaderboardEntry{}
-	}
-	if lb.Gatekeepers == nil {
-		lb.Gatekeepers = []db.LeaderboardEntry{}
-	}
-	if lb.MergeMasters == nil {
-		lb.MergeMasters = []db.LeaderboardEntry{}
-	}
-	if lb.OneShot == nil {
-		lb.OneShot = []db.LeaderboardEntry{}
-	}
-	if popularVisits == nil {
-		popularVisits = []db.PageVisit{}
-	}
-	if recentVisits == nil {
-		recentVisits = []db.PageVisit{}
-	}
+	// Nil slices become empty arrays in JSON.
+	if hc.SpeedDemons == nil { hc.SpeedDemons = []db.LeaderboardEntry{} }
+	if hc.PRGraveyard == nil { hc.PRGraveyard = []db.LeaderboardEntry{} }
+	if hc.ReviewChamps == nil { hc.ReviewChamps = []db.LeaderboardEntry{} }
+	if hc.Gatekeepers == nil { hc.Gatekeepers = []db.LeaderboardEntry{} }
+	if hc.MergeMasters == nil { hc.MergeMasters = []db.LeaderboardEntry{} }
+	if hc.OneShot == nil { hc.OneShot = []db.LeaderboardEntry{} }
+	if hc.PopularVisits == nil { hc.PopularVisits = []db.PageVisit{} }
+	if hc.RecentVisits == nil { hc.RecentVisits = []db.PageVisit{} }
 
 	setCachePublic(w, 30*time.Second, 120*time.Second)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"TotalRepos":    totalRepos,
-		"TotalPRs":      totalPRs,
-		"TotalReviews":  totalReviews,
-		"SpeedDemons":   lb.SpeedDemons,
-		"PRGraveyard":   lb.PRGraveyard,
-		"ReviewChamps":  lb.ReviewChamps,
-		"Gatekeepers":   lb.Gatekeepers,
-		"MergeMasters":  lb.MergeMasters,
-		"OneShot":       lb.OneShot,
-		"PopularVisits": popularVisits,
-		"RecentVisits":  recentVisits,
+		"TotalRepos":    hc.TotalRepos,
+		"TotalPRs":      hc.TotalPRs,
+		"TotalReviews":  hc.TotalReviews,
+		"SpeedDemons":   hc.SpeedDemons,
+		"PRGraveyard":   hc.PRGraveyard,
+		"ReviewChamps":  hc.ReviewChamps,
+		"Gatekeepers":   hc.Gatekeepers,
+		"MergeMasters":  hc.MergeMasters,
+		"OneShot":       hc.OneShot,
+		"PopularVisits": hc.PopularVisits,
+		"RecentVisits":  hc.RecentVisits,
 	})
 }
 

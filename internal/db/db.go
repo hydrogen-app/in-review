@@ -246,6 +246,8 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_at ON pull_requests(merged_at) WHERE merged=TRUE`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_contrib ON pull_requests(merged, repo_full_name, author_login) WHERE merged=TRUE`,
 		`CREATE INDEX IF NOT EXISTS idx_rev_repo_pr_time ON reviews(repo_full_name, pr_number, submitted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_merge_time ON pull_requests(merge_time_secs) WHERE merged=TRUE AND merge_time_secs > 0`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_size_bucket ON pull_requests(repo_full_name, merged_at, additions, deletions, merge_time_secs) WHERE merged=TRUE`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS first_review_at TIMESTAMPTZ`,
 		`UPDATE pull_requests SET first_review_at = (
 			SELECT MIN(submitted_at) FROM reviews
