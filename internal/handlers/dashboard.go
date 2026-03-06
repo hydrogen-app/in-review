@@ -112,6 +112,7 @@ func (h *Handler) AddRepo(w http.ResponseWriter, r *http.Request) {
 		Name:       name,
 		OrgName:    owner,
 		SyncStatus: "pending",
+		IsPrivate:  true,
 	})
 	if err := h.db.TrackRepoForUser(login, fullName); err != nil {
 		log.Printf("dashboard: track repo for user %s: %v", login, err)

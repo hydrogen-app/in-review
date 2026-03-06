@@ -33,6 +33,7 @@ type Repo struct {
 	AvgMergeTimeSecs int64
 	MinMergeTimeSecs int64
 	MaxMergeTimeSecs int64
+	IsPrivate        bool
 }
 
 type PullRequest struct {
@@ -278,6 +279,7 @@ func (d *DB) migrate() error {
 			installation_id BIGINT NOT NULL,
 			PRIMARY KEY (github_login, installation_id)
 		)`,
+		`ALTER TABLE repos ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT FALSE`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -291,15 +293,22 @@ func (d *DB) migrate() error {
 
 func (d *DB) UpsertRepo(r Repo) error {
 	_, err := d.conn.Exec(`
-		INSERT INTO repos (full_name, owner, name, description, stars, language, org_name, sync_status, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+		INSERT INTO repos (full_name, owner, name, description, stars, language, org_name, sync_status, is_private, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
 		ON CONFLICT(full_name) DO UPDATE SET
 			description  = EXCLUDED.description,
 			stars        = EXCLUDED.stars,
 			language     = EXCLUDED.language,
 			org_name     = EXCLUDED.org_name,
+			is_private   = EXCLUDED.is_private,
 			updated_at   = NOW()
-	`, r.FullName, r.Owner, r.Name, r.Description, r.Stars, r.Language, r.OrgName, r.SyncStatus)
+	`, r.FullName, r.Owner, r.Name, r.Description, r.Stars, r.Language, r.OrgName, r.SyncStatus, r.IsPrivate)
+	return err
+}
+
+// MarkRepoPrivate sets or clears the is_private flag on a repo.
+func (d *DB) MarkRepoPrivate(fullName string, isPrivate bool) error {
+	_, err := d.conn.Exec(`UPDATE repos SET is_private=$1, updated_at=NOW() WHERE full_name=$2`, isPrivate, fullName)
 	return err
 }
 
@@ -389,12 +398,15 @@ func (d *DB) GetRepo(fullName string) (*Repo, error) {
 	err := d.conn.QueryRow(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
-		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       is_private,
+		       is_private
 		FROM repos WHERE full_name=$1
 	`, fullName).Scan(
 		&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
 		&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
 		&r.AvgMergeTimeSecs, &r.MinMergeTimeSecs, &r.MaxMergeTimeSecs,
+		&r.IsPrivate,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -438,7 +450,7 @@ func (d *DB) LeaderboardReposBySpeed(order string, limit int) ([]LeaderboardEntr
 	q := fmt.Sprintf(`
 		SELECT full_name, avg_merge_time_secs, merged_pr_count
 		FROM repos
-		WHERE merged_pr_count >= 3 AND avg_merge_time_secs > 0
+		WHERE NOT is_private AND merged_pr_count >= 3 AND avg_merge_time_secs > 0
 		ORDER BY avg_merge_time_secs %s
 		LIMIT $1`, order)
 	return d.queryEntries(q, limit)
@@ -448,6 +460,7 @@ func (d *DB) LeaderboardReviewers(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
+		JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE r.state IN ('APPROVED','CHANGES_REQUESTED','COMMENTED')
 		GROUP BY r.reviewer_login
@@ -459,6 +472,7 @@ func (d *DB) LeaderboardGatekeepers(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
+		JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE r.state='CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
@@ -470,6 +484,7 @@ func (d *DB) LeaderboardAuthors(limit int) ([]LeaderboardEntry, error) {
 	return d.queryEntries(`
 		SELECT p.author_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM pull_requests p
+		JOIN repos repo ON repo.full_name = p.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login=p.author_login
 		WHERE p.merged=TRUE
 		GROUP BY p.author_login
@@ -479,12 +494,13 @@ func (d *DB) LeaderboardAuthors(limit int) ([]LeaderboardEntry, error) {
 
 func (d *DB) LeaderboardCleanApprovals(limit int) ([]LeaderboardEntry, error) {
 	rows, err := d.conn.Query(`
-		SELECT repo_full_name,
+		SELECT p.repo_full_name,
 		       COUNT(*) as total,
-		       CAST(ROUND(100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct
-		FROM pull_requests
-		WHERE merged=TRUE AND review_count>0
-		GROUP BY repo_full_name
+		       CAST(ROUND(100.0 * SUM(CASE WHEN p.changes_requested_count=0 AND p.review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct
+		FROM pull_requests p
+		JOIN repos repo ON repo.full_name = p.repo_full_name AND NOT repo.is_private
+		WHERE p.merged=TRUE AND p.review_count>0
+		GROUP BY p.repo_full_name
 		HAVING COUNT(*) >= 5
 		ORDER BY clean_pct DESC
 		LIMIT $1`, limit)
@@ -646,8 +662,10 @@ func (d *DB) UserAuthorStats(login string) (*AuthorStats, error) {
 func (d *DB) UserReviewerRank(login string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
-			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM reviews GROUP BY reviewer_login
+			SELECT r.reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
+			FROM reviews r
+			JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
+			GROUP BY r.reviewer_login
 		) sub WHERE reviewer_login=$1
 	`, login)
 }
@@ -655,8 +673,11 @@ func (d *DB) UserReviewerRank(login string) (int, error) {
 func (d *DB) UserGatekeeperRank(login string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
-			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM reviews WHERE state='CHANGES_REQUESTED' GROUP BY reviewer_login
+			SELECT r.reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
+			FROM reviews r
+			JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
+			WHERE r.state='CHANGES_REQUESTED'
+			GROUP BY r.reviewer_login
 		) sub WHERE reviewer_login=$1
 	`, login)
 }
@@ -665,7 +686,7 @@ func (d *DB) RepoSpeedRank(fullName string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
 			SELECT full_name, ROW_NUMBER() OVER (ORDER BY avg_merge_time_secs ASC) as rank
-			FROM repos WHERE merged_pr_count>=3 AND avg_merge_time_secs>0
+			FROM repos WHERE NOT is_private AND merged_pr_count>=3 AND avg_merge_time_secs>0
 		) sub WHERE full_name=$1
 	`, fullName)
 }
@@ -674,7 +695,7 @@ func (d *DB) RepoGraveyardRank(fullName string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
 			SELECT full_name, ROW_NUMBER() OVER (ORDER BY avg_merge_time_secs DESC) as rank
-			FROM repos WHERE merged_pr_count>=3 AND avg_merge_time_secs>0
+			FROM repos WHERE NOT is_private AND merged_pr_count>=3 AND avg_merge_time_secs>0
 		) sub WHERE full_name=$1
 	`, fullName)
 }
@@ -682,8 +703,11 @@ func (d *DB) RepoGraveyardRank(fullName string) (int, error) {
 func (d *DB) UserAuthorRank(login string) (int, error) {
 	return d.rankQuery(`
 		SELECT rank FROM (
-			SELECT author_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM pull_requests WHERE merged=TRUE GROUP BY author_login
+			SELECT p.author_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
+			FROM pull_requests p
+			JOIN repos repo ON repo.full_name = p.repo_full_name AND NOT repo.is_private
+			WHERE p.merged=TRUE
+			GROUP BY p.author_login
 		) sub WHERE author_login=$1
 	`, login)
 }
@@ -703,8 +727,9 @@ func (d *DB) OrgRepos(orgName string) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
-		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
-		FROM repos WHERE org_name=$1
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       is_private
+		FROM repos WHERE org_name=$1 AND NOT is_private
 		ORDER BY merged_pr_count DESC
 	`, orgName)
 	if err != nil {
@@ -718,7 +743,7 @@ func (d *DB) OrgReviewerLeaderboard(orgName string, limit int) ([]LeaderboardEnt
 	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
-		JOIN repos repo ON repo.full_name=r.repo_full_name
+		JOIN repos repo ON repo.full_name=r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE repo.org_name=$1
 		GROUP BY r.reviewer_login
@@ -735,7 +760,7 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 	rows, err := d.conn.Query(`
 		SELECT r.reviewer_login, COUNT(*) as cnt, MAX(COALESCE(u.avatar_url,''))
 		FROM reviews r
-		JOIN repos repo ON repo.full_name=r.repo_full_name
+		JOIN repos repo ON repo.full_name=r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login=r.reviewer_login
 		WHERE repo.org_name=$1 AND r.state='CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
@@ -751,9 +776,9 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 // ── Global stats ───────────────────────────────────────────────────────────────
 
 func (d *DB) TotalStats() (repos, prs, reviews int) {
-	d.conn.QueryRow(`SELECT COUNT(*) FROM repos WHERE sync_status='done'`).Scan(&repos)
-	d.conn.QueryRow(`SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE`).Scan(&prs)
-	d.conn.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviews)
+	d.conn.QueryRow(`SELECT COUNT(*) FROM repos WHERE sync_status='done' AND NOT is_private`).Scan(&repos)
+	d.conn.QueryRow(`SELECT COUNT(*) FROM pull_requests p JOIN repos r ON r.full_name=p.repo_full_name WHERE p.merged=TRUE AND NOT r.is_private`).Scan(&prs)
+	d.conn.QueryRow(`SELECT COUNT(*) FROM reviews rv JOIN repos r ON r.full_name=rv.repo_full_name WHERE NOT r.is_private`).Scan(&reviews)
 	return
 }
 
@@ -795,7 +820,7 @@ func (d *DB) FullLeaderboardRepoSpeed(order string, limit, offset int) ([]RepoLe
 		       max_merge_time_secs,
 		       merged_pr_count
 		FROM repos
-		WHERE merged_pr_count >= 3 AND avg_merge_time_secs > 0
+		WHERE NOT is_private AND merged_pr_count >= 3 AND avg_merge_time_secs > 0
 		ORDER BY avg_merge_time_secs %s
 		LIMIT $1 OFFSET $2`, order)
 	rows, err := d.conn.Query(q, limit, offset)
@@ -826,6 +851,7 @@ func (d *DB) FullLeaderboardReviewers(limit, offset int) ([]UserLeaderboardRow, 
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END)
 		FROM reviews r
+		JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login = r.reviewer_login
 		GROUP BY r.reviewer_login
 		ORDER BY total DESC
@@ -845,6 +871,7 @@ func (d *DB) FullLeaderboardGatekeepers(limit, offset int) ([]UserLeaderboardRow
 		       SUM(CASE WHEN r.state='APPROVED'          THEN 1 ELSE 0 END),
 		       SUM(CASE WHEN r.state='CHANGES_REQUESTED' THEN 1 ELSE 0 END)
 		FROM reviews r
+		JOIN repos repo ON repo.full_name = r.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login = r.reviewer_login
 		WHERE r.state = 'CHANGES_REQUESTED'
 		GROUP BY r.reviewer_login
@@ -867,6 +894,7 @@ func (d *DB) FullLeaderboardAuthors(limit, offset int) ([]UserLeaderboardRow, er
 		       COUNT(*) as merged_prs,
 		       COALESCE(AVG(p.merge_time_secs), 0)::BIGINT as avg_secs
 		FROM pull_requests p
+		JOIN repos repo ON repo.full_name = p.repo_full_name AND NOT repo.is_private
 		LEFT JOIN users u ON u.login = p.author_login
 		WHERE p.merged = TRUE
 		GROUP BY p.author_login
@@ -893,13 +921,14 @@ func (d *DB) FullLeaderboardAuthors(limit, offset int) ([]UserLeaderboardRow, er
 
 func (d *DB) FullLeaderboardCleanApprovals(limit, offset int) ([]CleanLeaderboardRow, error) {
 	rows, err := d.conn.Query(`
-		SELECT repo_full_name,
+		SELECT p.repo_full_name,
 		       COUNT(*) as total,
-		       CAST(ROUND(100.0 * SUM(CASE WHEN changes_requested_count=0 AND review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct,
-		       COALESCE(AVG(merge_time_secs), 0) as avg_secs
-		FROM pull_requests
-		WHERE merged=TRUE AND review_count>0
-		GROUP BY repo_full_name
+		       CAST(ROUND(100.0 * SUM(CASE WHEN p.changes_requested_count=0 AND p.review_count>0 THEN 1 ELSE 0 END) / COUNT(*)) AS INTEGER) as clean_pct,
+		       COALESCE(AVG(p.merge_time_secs), 0) as avg_secs
+		FROM pull_requests p
+		JOIN repos repo ON repo.full_name = p.repo_full_name AND NOT repo.is_private
+		WHERE p.merged=TRUE AND p.review_count>0
+		GROUP BY p.repo_full_name
 		HAVING COUNT(*) >= 5
 		ORDER BY clean_pct DESC
 		LIMIT $1 OFFSET $2`, limit, offset)
@@ -946,9 +975,11 @@ func (d *DB) UserContributedRepos(login string, limit int) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT r.full_name, r.owner, r.name, r.description, r.stars, r.language, r.org_name,
 		       r.last_synced, r.sync_status, r.pr_count, r.merged_pr_count,
-		       r.avg_merge_time_secs, r.min_merge_time_secs, r.max_merge_time_secs
+		       r.avg_merge_time_secs, r.min_merge_time_secs, r.max_merge_time_secs,
+		       r.is_private
 		FROM repos r
-		WHERE r.full_name IN (
+		WHERE NOT r.is_private
+		  AND r.full_name IN (
 			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login=$1
 			UNION
 			SELECT DISTINCT repo_full_name FROM reviews WHERE reviewer_login=$2
@@ -1140,9 +1171,10 @@ func (d *DB) SearchRepos(query string, limit int) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
-		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       is_private
 		FROM repos
-		WHERE full_name ILIKE $1 OR name ILIKE $2
+		WHERE NOT is_private AND (full_name ILIKE $1 OR name ILIKE $2)
 		ORDER BY stars DESC
 		LIMIT $3
 	`, "%"+query+"%", "%"+query+"%", limit)
@@ -1164,6 +1196,7 @@ func scanRepos(rows *sql.Rows) ([]Repo, error) {
 			&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
 			&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
 			&r.AvgMergeTimeSecs, &r.MinMergeTimeSecs, &r.MaxMergeTimeSecs,
+			&r.IsPrivate,
 		); err != nil {
 			log.Printf("db: scanRepos scan error: %v", err)
 			continue
@@ -1333,6 +1366,7 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 		CROSS JOIN cutoff
 		WHERE pr.merged=TRUE AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= p)
+		  AND NOT r.is_private
 		  AND ($2 <= 0 OR r.stars >= $2)
 		  AND ($3 <= 0 OR rc.n >= $3)
 		GROUP BY bucket
@@ -1380,6 +1414,7 @@ func (d *DB) GlobalOverallStats(minStars, minContribs int) (GlobalOverallStats, 
 		JOIN repos r ON r.full_name = pr.repo_full_name
 		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merge_time_secs > 0
+		  AND NOT r.is_private
 		  AND ($1 <= 0 OR r.stars >= $1)
 		  AND ($2 <= 0 OR rc.n >= $2)
 	`, minStars, minContribs).Scan(&s.TotalPRs, &s.TotalRepos, &avgF, &medianF)
@@ -1453,6 +1488,7 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
+		  AND NOT r.is_private
 		  AND ($2 <= 0 OR r.stars >= $2)
 		  AND ($3 <= 0 OR rc.n >= $3)
 		GROUP BY DATE_TRUNC('month', pr.merged_at)
@@ -1557,6 +1593,7 @@ func (d *DB) GlobalOpenedSeriesData(minStars, minContribs int) ([]TimeSeriesPoin
 		JOIN repos r ON r.full_name = pr.repo_full_name
 		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.opened_at IS NOT NULL
+		  AND NOT r.is_private
 		  AND ($1 <= 0 OR r.stars >= $1)
 		  AND ($2 <= 0 OR rc.n >= $2)
 		GROUP BY DATE_TRUNC('month', pr.opened_at)
@@ -1583,7 +1620,7 @@ func (d *DB) GlobalOpenedSeriesData(minStars, minContribs int) ([]TimeSeriesPoin
 func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
 		WITH org_repos AS (
-			SELECT full_name FROM repos WHERE owner=$1 OR org_name=$1
+			SELECT full_name FROM repos WHERE (owner=$1 OR org_name=$1) AND NOT is_private
 		),
 		cutoff AS (
 			SELECT COALESCE(
@@ -1966,6 +2003,27 @@ func (d *DB) LinkSessionInstallation(sessionID string, installationID int64) err
 	return err
 }
 
+// UserCanAccessRepo returns true if the authenticated user has access to a private repo.
+// Access is granted if:
+// - The user has explicitly tracked the repo via the dashboard, OR
+// - The user has an active installation covering the repo's owner/org.
+func (d *DB) UserCanAccessRepo(login, fullName string) (bool, error) {
+	var exists bool
+	err := d.conn.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM user_tracked_repos
+			WHERE github_login = $1 AND repo_full_name = $2
+			UNION ALL
+			SELECT 1 FROM user_installations ui
+			JOIN app_installations ai ON ai.installation_id = ui.installation_id
+			WHERE ui.github_login = $1
+			  AND SPLIT_PART($2, '/', 1) = ai.github_login
+			  AND ai.uninstalled_at IS NULL
+		)
+	`, login, fullName).Scan(&exists)
+	return exists, err
+}
+
 // TrackRepoForUser records that a user has explicitly chosen to track a repo,
 // regardless of whether they own it (supports org repos).
 func (d *DB) TrackRepoForUser(login, repoFullName string) error {
@@ -1983,7 +2041,8 @@ func (d *DB) UserOwnedTrackedRepos(login string) ([]Repo, error) {
 	rows, err := d.conn.Query(`
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
-		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
+		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       is_private
 		FROM repos
 		WHERE (owner = $1 OR org_name = $1)
 		   OR full_name IN (
@@ -2044,9 +2103,11 @@ func (d *DB) ListReposFiltered(limit, offset int, sortBy, search, status string)
 		SELECT full_name, owner, name, description, stars, language, org_name,
 		       last_synced, sync_status, pr_count, merged_pr_count,
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs,
+		       is_private,
 		       COUNT(*) OVER() AS total
 		FROM repos
-		WHERE ($1 = '' OR full_name ILIKE '%%' || $1 || '%%')
+		WHERE NOT is_private
+		  AND ($1 = '' OR full_name ILIKE '%%' || $1 || '%%')
 		  AND ($2 = '' OR sync_status = $2)
 		ORDER BY %s %s
 		LIMIT $3 OFFSET $4
@@ -2065,7 +2126,7 @@ func (d *DB) ListReposFiltered(limit, offset int, sortBy, search, status string)
 			&r.FullName, &r.Owner, &r.Name, &r.Description, &r.Stars, &r.Language, &r.OrgName,
 			&lastSynced, &r.SyncStatus, &r.PRCount, &r.MergedPRCount,
 			&r.AvgMergeTimeSecs, &r.MinMergeTimeSecs, &r.MaxMergeTimeSecs,
-			&total,
+			&r.IsPrivate, &total,
 		); err != nil {
 			log.Printf("db: ListReposFiltered scan: %v", err)
 			continue
@@ -2092,14 +2153,15 @@ func (d *DB) ListPRsFiltered(limit, offset int, repo, author, sortBy string) ([]
 		col, dir = "(additions + deletions)", "DESC"
 	}
 	q := fmt.Sprintf(`
-		SELECT id, repo_full_name, number, title, author_login, merged,
-		       opened_at, merged_at, merge_time_secs, review_count, changes_requested_count,
-		       additions, deletions,
+		SELECT p.id, p.repo_full_name, p.number, p.title, p.author_login, p.merged,
+		       p.opened_at, p.merged_at, p.merge_time_secs, p.review_count, p.changes_requested_count,
+		       p.additions, p.deletions,
 		       COUNT(*) OVER() AS total
-		FROM pull_requests
-		WHERE merged = TRUE
-		  AND ($1 = '' OR repo_full_name ILIKE '%%' || $1 || '%%')
-		  AND ($2 = '' OR author_login ILIKE '%%' || $2 || '%%')
+		FROM pull_requests p
+		JOIN repos r ON r.full_name = p.repo_full_name AND NOT r.is_private
+		WHERE p.merged = TRUE
+		  AND ($1 = '' OR p.repo_full_name ILIKE '%%' || $1 || '%%')
+		  AND ($2 = '' OR p.author_login ILIKE '%%' || $2 || '%%')
 		ORDER BY %s %s NULLS LAST
 		LIMIT $3 OFFSET $4
 	`, col, dir)
@@ -2138,12 +2200,13 @@ func (d *DB) ListPRsFiltered(limit, offset int, repo, author, sortBy string) ([]
 // ListReviewsFiltered returns a page of reviews and total count matching filters.
 func (d *DB) ListReviewsFiltered(limit, offset int, reviewer, state string) ([]Review, int, error) {
 	rows, err := d.conn.Query(`
-		SELECT id, repo_full_name, pr_number, reviewer_login, state, submitted_at,
+		SELECT rv.id, rv.repo_full_name, rv.pr_number, rv.reviewer_login, rv.state, rv.submitted_at,
 		       COUNT(*) OVER() AS total
-		FROM reviews
-		WHERE ($1 = '' OR reviewer_login ILIKE '%' || $1 || '%')
-		  AND ($2 = '' OR state = $2)
-		ORDER BY submitted_at DESC
+		FROM reviews rv
+		JOIN repos r ON r.full_name = rv.repo_full_name AND NOT r.is_private
+		WHERE ($1 = '' OR rv.reviewer_login ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR rv.state = $2)
+		ORDER BY rv.submitted_at DESC
 		LIMIT $3 OFFSET $4
 	`, reviewer, state, limit, offset)
 	if err != nil {

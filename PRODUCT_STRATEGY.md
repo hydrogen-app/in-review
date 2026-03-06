@@ -14,57 +14,57 @@ to build on.
 
 ## High-Value Features for Companies
 
-### 1. Industry Benchmarking
+### 1. Industry Benchmarking — TODO
 Show a company how they compare to public repos filtered by language, size tier, and star count.
 "Your team reviews PRs in 4.1 days. The median for your language/size tier is 1.8 days."
 This is the hook. It's immediately legible to an engineering manager and requires zero setup for
 public repos.
 
-### 2. Bottleneck Identification
+### 2. Bottleneck Identification — TODO
 Surface which individuals are the single point of failure for approvals.
 "3 people approve 80% of your PRs. If any one is unavailable, velocity drops significantly."
 GitHub doesn't surface this. Engineering managers care about review bus factor, not just code
 ownership. Pair with reviewer load distribution (see below).
 
-### 3. Reviewer Load Distribution
+### 3. Reviewer Load Distribution — TODO
 Visualize how evenly review work is spread across the team. A heavily skewed distribution is
 both a burnout risk and a knowledge-silo risk. Show the Gini coefficient or a simple bar chart
 of review counts per person. Immediately actionable — reassign review assignments or use
 CODEOWNERS to rebalance.
 
-### 4. Review Quality Signals
+### 4. Review Quality Signals — TODO
 Track rubber-stamp rate: approvals with zero review comments. A team with 0% changes-requested
 rate and zero comments per review is not reviewing — they're clicking approve. Surface this
 alongside changes-requested rate so managers can distinguish healthy rigor from checkbox culture.
 
-### 5. First Response Time
+### 5. First Response Time — TODO
 Time from PR open to first review comment or approval, separate from total merge time.
 This is the metric engineering managers actually track for SLAs ("no PR sits unreviewed for
 more than 24 hours"). Splitting it out lets teams diagnose whether the bottleneck is
 responsiveness or iteration cycles.
 
-### 6. PR Size Coaching
+### 6. PR Size Coaching — TODO
 "Your org's PRs average 800 lines. Review time drops 60% for PRs under 200 lines."
 Benchmarked against the public dataset, this is a data-backed recommendation, not an opinion.
 Actionable at the team level without requiring process changes from leadership.
 
-### 7. Day-of-Week / Time Patterns
+### 7. Day-of-Week / Time Patterns — TODO
 Show when PRs are opened vs. when they receive first review. PRs opened Friday afternoon
 and reviewed Monday is a process problem, not a people problem. Surfacing this separates the
 tool from pure blame dashboards and makes it useful for process improvement conversations.
 
-### 8. Slack / Email Digest
+### 8. Slack / Email Digest — TODO
 Weekly summary of org PR stats sent to a channel or inbox. Frictionless — no one logs into
 dashboards voluntarily. Engineers read Slack. GitHub sends nothing like this. Digest should
 include: avg review time this week vs. last week, top reviewer, any PRs that sat unreviewed
 >48h, and a link to the full dashboard.
 
-### 9. Review Debt View
+### 9. Review Debt View — TODO
 A single list of PRs open for more than N days with no review. The thing a team lead checks
 Monday morning. Currently requires filtering GitHub's PR list manually across each repo.
 Cross-repo in a single view is the value.
 
-### 10. Embeddable Widget / API
+### 10. Embeddable Widget / API — TODO
 Let teams pull data into internal wikis, Notion pages, or custom dashboards. An iframe embed
 or simple JSON API endpoint requires low engineering effort but has high perceived value for
 companies that want to centralize tooling. Also useful as a marketing surface — embedded
@@ -74,12 +74,26 @@ badges in READMEs already exist, expand to full widget embeds.
 
 ## Private Repo Data Privacy — Critical Blocker
 
-**Right now, all synced data is public.** A company that installs the GitHub App and syncs their
-private repos will have their PR authors, reviewer names, merge times, and review counts visible
-to anyone who visits ngmi. This is a non-starter for any company and would likely prevent the
-GitHub App from being approved by GitHub's review process.
+**STATUS: IMPLEMENTED** (2026-03-05)
 
-This must be fixed before marketing to companies. Everything else in this document is secondary.
+~~**Right now, all synced data is public.**~~ Private repo data is now gated. Repos added via the
+GitHub App dashboard are marked `is_private=true` and are excluded from all public-facing queries.
+
+What was shipped:
+- `is_private` column on repos table; repos added via dashboard are marked private on insert
+- All leaderboard queries (speed, reviewers, gatekeepers, authors, clean approvals) filter private repos via `AND NOT is_private` or JOIN
+- All global stats/benchmarks (GlobalSizeChartData, GlobalOverallStats, time series) filter private repos
+- TotalStats, SearchRepos, Data Explorer (repos/PRs/reviews) all exclude private repos
+- Org queries (OrgRepos, OrgTimeSeriesData, org leaderboards) exclude private repos
+- User profile contributed-repos list only shows public repo activity to anonymous visitors
+- All rank computations exclude private repos so rankings reflect the public dataset
+- Repo page gates access: unauthenticated users → redirect to login; authenticated users checked against `user_tracked_repos` + `app_installations` before serving data
+- `UserCanAccessRepo()` DB method checks both direct tracking and installation org membership
+- Leaderboard search treats private repos as not found for unauthenticated queries
+
+What is NOT yet done:
+- User profile: authenticated users with shared org access do not yet see combined public+private stats
+- Org page: does not yet require auth when all repos are private; currently just shows empty repo list
 
 ### What needs to change
 

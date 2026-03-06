@@ -200,6 +200,10 @@ func (h *Handler) leaderboardRepoSearch(result *LeaderboardSearchData, category,
 		}
 	}
 
+	if repo != nil && repo.IsPrivate {
+		repo = nil // treat private repos as not found in public leaderboard search
+	}
+
 	if repo == nil || repo.MergedPRCount == 0 {
 		trackPath := "/repo/" + query
 		if repo != nil {

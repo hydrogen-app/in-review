@@ -81,6 +81,21 @@ func (h *Handler) Repo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Gate access to private repos.
+	if repo.IsPrivate {
+		login := currentUser(r)
+		if login == "" {
+			http.Redirect(w, r, "/auth/login?next="+url.QueryEscape(r.URL.Path), http.StatusFound)
+			return
+		}
+		if ok, _ := h.db.UserCanAccessRepo(login, fullName); !ok {
+			h.renderErrorReq(w, r, http.StatusForbidden,
+				"Access Denied",
+				"This is a private repository. You need to install the GitHub App and add this repo to access it.")
+			return
+		}
+	}
+
 	// Queue sync if needed
 	h.worker.Queue(fullName, false)
 
