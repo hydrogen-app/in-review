@@ -1,7 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { error } from '@sveltejs/kit';
 
-export const load: PageServerLoad = async ({ fetch, cookies, params, url }) => {
+export const load: PageServerLoad = async ({ fetch, cookies, params, url, setHeaders }) => {
 	const { category } = params;
 	const sessionId = cookies.get('session_id');
 	const headers: Record<string, string> = {};
@@ -12,5 +12,6 @@ export const load: PageServerLoad = async ({ fetch, cookies, params, url }) => {
 	if (resp.status === 404) error(404, 'Invalid leaderboard category');
 	if (!resp.ok) error(502, 'Could not load leaderboard');
 	const data = await resp.json();
+	setHeaders({ 'cache-control': 'public, s-maxage=60, stale-while-revalidate=300' });
 	return { leaderboard: data };
 };

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"inreview/internal/db"
+	"inreview/internal/github"
 	"inreview/internal/rdb"
 )
 
@@ -19,6 +20,12 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// setCachePublic sets Cache-Control headers for public, non-personalised responses.
+func setCachePublic(w http.ResponseWriter, maxAge, swrAge time.Duration) {
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, s-maxage=%d, stale-while-revalidate=%d",
+		int(maxAge.Seconds()), int(swrAge.Seconds())))
 }
 
 // ── /api/v1/me ─────────────────────────────────────────────────────────────────
@@ -85,6 +92,7 @@ func (h *Handler) HomeJSON(w http.ResponseWriter, r *http.Request) {
 		recentVisits = []db.PageVisit{}
 	}
 
+	setCachePublic(w, 30*time.Second, 120*time.Second)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"TotalRepos":    totalRepos,
 		"TotalPRs":      totalPRs,
@@ -236,14 +244,35 @@ func (h *Handler) RepoJSON(w http.ResponseWriter, r *http.Request) {
 	h.worker.Queue(fullName, false)
 	h.db.RecordVisit("/repo/"+fullName, "repo", fullName)
 
-	topReviewers, _ := h.db.RepoTopReviewers(fullName, 10)
-	recentPRs, _ := h.db.RecentMergedPRs(fullName, 20)
-	speedRank, _ := h.db.RepoSpeedRank(fullName)
+	// Run all remaining queries concurrently
+	type reviewersResult struct{ v []db.ReviewerStats }
+	type prsResult struct{ v []db.PullRequest }
+	type rankResult struct{ v int }
+	type sizeResult struct{ v []db.PRSizeBucket }
+	type timeResult struct{ v []db.TimeSeriesPoint }
+
+	reviewersCh := make(chan reviewersResult, 1)
+	prsCh := make(chan prsResult, 1)
+	rankCh := make(chan rankResult, 1)
+	sizeCh := make(chan sizeResult, 1)
+	timeCh := make(chan timeResult, 1)
+
+	go func() { v, _ := h.db.RepoTopReviewers(fullName, 10); reviewersCh <- reviewersResult{v} }()
+	go func() { v, _ := h.db.RecentMergedPRs(fullName, 20); prsCh <- prsResult{v} }()
+	go func() { v, _ := h.db.RepoSpeedRank(fullName); rankCh <- rankResult{v} }()
+	go func() { v, _ := h.db.RepoSizeChartData(fullName, cutoffPct); sizeCh <- sizeResult{v} }()
+	go func() { v, _ := h.db.RepoTimeSeriesData(fullName, cutoffPct); timeCh <- timeResult{v} }()
+
+	topReviewers := (<-reviewersCh).v
+	recentPRs := (<-prsCh).v
+	speedRank := (<-rankCh).v
+	sizeBuckets := (<-sizeCh).v
+	timePoints := (<-timeCh).v
 
 	var sizeChart *sizeChartPayload
-	if buckets, err := h.db.RepoSizeChartData(fullName, cutoffPct); err == nil && len(buckets) > 0 {
+	if len(sizeBuckets) > 0 {
 		p := &sizeChartPayload{}
-		for _, b := range buckets {
+		for _, b := range sizeBuckets {
 			p.Labels = append(p.Labels, b.Label)
 			p.PRCounts = append(p.PRCounts, b.PRCount)
 			p.AvgHours = append(p.AvgHours, roundTo1(b.AvgSecs/3600))
@@ -253,9 +282,9 @@ func (h *Handler) RepoJSON(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var timeChart *timeChartPayload
-	if points, err := h.db.RepoTimeSeriesData(fullName, cutoffPct); err == nil && len(points) > 0 {
+	if len(timePoints) > 0 {
 		tp := &timeChartPayload{}
-		for _, p := range points {
+		for _, p := range timePoints {
 			tp.Labels = append(tp.Labels, p.Label)
 			tp.PRCounts = append(tp.PRCounts, p.PRCount)
 			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
@@ -339,14 +368,18 @@ func (h *Handler) SyncStatusJSON(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UserJSON(w http.ResponseWriter, r *http.Request) {
 	username := chi.URLParam(r, "username")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
+	// Use cached DB record if it's fresh (< 1h), avoiding a GitHub API call on every page view
+	const userCacheTTL = time.Hour
+	cached, _ := h.db.GetUser(username)
+	fresh := cached != nil && cached.LastFetched != nil && time.Since(*cached.LastFetched) < userCacheTTL
 
-	ghUser, err := h.gh.GetUser(ctx, username)
-	if err != nil {
-		if cached, dbErr := h.db.GetUser(username); dbErr == nil && cached != nil {
-			// fall through with ghUser = nil
-		} else {
+	var ghUser *github.GHUser
+	if !fresh {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		var err error
+		ghUser, err = h.gh.GetUser(ctx, username)
+		if err != nil && cached == nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 			return
 		}
@@ -659,6 +692,7 @@ func (h *Handler) LeaderboardPageJSON(w http.ResponseWriter, r *http.Request) {
 		data.CleanRows = []db.CleanLeaderboardRow{}
 	}
 
+	setCachePublic(w, 60*time.Second, 300*time.Second)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"Category":    data.Category,
 		"Title":       data.Title,
@@ -706,6 +740,7 @@ func (h *Handler) StatsJSON(w http.ResponseWriter, r *http.Request) {
 	cacheKey := fmt.Sprintf("stats:api:v1:%d:%d:%d", trim, minStars, minContribs)
 	if h.cache != nil {
 		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
+			setCachePublic(w, 120*time.Second, 600*time.Second)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(raw)
 			return
@@ -800,6 +835,7 @@ func (h *Handler) StatsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	setCachePublic(w, 120*time.Second, 600*time.Second)
 	writeJSON(w, http.StatusOK, resp)
 }
 
