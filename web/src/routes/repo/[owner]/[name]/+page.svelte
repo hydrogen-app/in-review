@@ -9,6 +9,7 @@
 	import * as Chart from '$lib/components/ui/chart/index.js';
 	import { LineChart, BarChart } from 'layerchart';
 	import { formatDuration, formatNumber, rankClass, timeAgo } from '$lib/utils';
+	import { RefreshCw, Check, Clock, Star } from '@lucide/svelte';
 	import { toRows } from '$lib/types';
 	import type { Repo, ReviewerStats, PullRequest } from '$lib/types';
 
@@ -96,7 +97,7 @@
 			<Badge variant="secondary">{repo.Language}</Badge>
 		{/if}
 		{#if repo?.Stars}
-			<Badge variant="outline">{formatNumber(repo.Stars)} ★</Badge>
+			<Badge variant="outline"><Star class="inline size-3" /> {formatNumber(repo.Stars)}</Badge>
 		{/if}
 	</div>
 	{#if repo?.Description}
@@ -106,16 +107,16 @@
 	<div class="flex flex-wrap items-center gap-2">
 		{#if syncStatus}
 			{#if syncStatus.status === 'syncing'}
-				<Badge variant="secondary" class="animate-pulse">⟳ Syncing…</Badge>
+				<Badge variant="secondary" class="animate-pulse"><RefreshCw class="size-3 animate-spin" /> Syncing</Badge>
 			{:else if syncStatus.status === 'queued'}
-				<Badge variant="secondary" class="animate-pulse">⟳ Queue #{syncStatus.queuePos}</Badge>
+				<Badge variant="secondary" class="animate-pulse"><RefreshCw class="size-3 animate-spin" /> Queue #{syncStatus.queuePos}</Badge>
 			{:else if syncStatus.status === 'done'}
-				<Badge variant="outline" class="text-green-400">✓ Synced {syncStatus.timeAgo}</Badge>
+				<Badge variant="outline" class="text-green-400"><Check class="size-3" /> Synced {syncStatus.timeAgo}</Badge>
 			{:else}
-				<Badge variant="outline">⏳ Pending</Badge>
+				<Badge variant="outline"><Clock class="size-3" /> Pending</Badge>
 			{/if}
 		{/if}
-		<Button size="sm" variant="outline" onclick={triggerSync}>↻ Sync Now</Button>
+		<Button size="sm" variant="outline" onclick={triggerSync}>Sync Now</Button>
 		{#if d?.ShareURL}
 			<a href={d.ShareURL} target="_blank" rel="noopener">
 				<Button size="sm" variant="outline">Share on X →</Button>
@@ -232,10 +233,10 @@
 					<div class="flex gap-1.5 text-xs">
 						<Badge variant="secondary">{reviewer.TotalReviews} reviews</Badge>
 						{#if reviewer.Approvals}
-							<Badge variant="outline" class="text-green-400">✓ {reviewer.Approvals}</Badge>
+							<Badge variant="outline" class="text-green-400"><Check class="size-3" /> {reviewer.Approvals}</Badge>
 						{/if}
 						{#if reviewer.ChangesRequested}
-							<Badge variant="outline" class="text-red-400">↺ {reviewer.ChangesRequested}</Badge>
+							<Badge variant="outline" class="text-red-400">{reviewer.ChangesRequested}×</Badge>
 						{/if}
 					</div>
 				</a>
@@ -291,7 +292,7 @@
 								{#if pr.ChangesRequestedCount}
 									<Badge variant="secondary" class="text-red-400">{pr.ChangesRequestedCount}×</Badge>
 								{:else}
-									<Badge variant="outline" class="text-green-400">✓</Badge>
+									<Badge variant="outline" class="text-green-400"><Check class="size-3" /></Badge>
 								{/if}
 							</TableCell>
 						</TableRow>

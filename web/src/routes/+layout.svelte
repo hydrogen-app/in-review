@@ -15,7 +15,7 @@
 
 <div class="min-h-screen bg-background font-mono text-sm">
 	<!-- Nav -->
-	<nav class="mx-auto flex max-w-4xl items-baseline gap-4 border-b border-border px-5 pb-3 pt-4">
+	<nav class="mx-auto flex max-w-[860px] items-baseline gap-4 border-b border-border px-5 pb-3 pt-4">
 		<a href="/" class="font-bold text-foreground no-underline">ngmi</a>
 		<div class="ml-auto flex items-center gap-3">
 			<a href="/stats" class="text-xs text-muted-foreground hover:text-foreground hover:underline">Stats</a>
@@ -34,15 +34,15 @@
 	</nav>
 
 	<!-- Main -->
-	<main class="mx-auto max-w-4xl px-5 py-6">
+	<main class="mx-auto max-w-[860px] px-5 py-6">
 		{@render children()}
 	</main>
 
 	<!-- Hi widget placeholder (client-side loaded) -->
-	<div id="hi-widget-mount" class="mx-auto max-w-4xl px-5"></div>
+	<div id="hi-widget-mount" class="mx-auto max-w-[860px] px-5"></div>
 
 	<!-- Footer -->
-	<footer class="mx-auto max-w-4xl border-t border-border px-5 py-4 text-xs text-muted-foreground">
+	<footer class="mx-auto max-w-[860px] border-t border-border px-5 py-4 text-xs text-muted-foreground">
 		<div class="flex flex-wrap items-center gap-2">
 			<span class="font-bold text-foreground">ngmi</span>
 			<span>·</span>

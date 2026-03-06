@@ -4,6 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { formatDuration, formatNumber, rankClass } from '$lib/utils';
 	import type { LeaderboardEntry, PageVisit, SearchResult } from '$lib/types';
+	import { Star } from '@lucide/svelte';
 
 	let { data } = $props();
 	const home = $derived(data.home);
@@ -90,7 +91,7 @@
 							{#if result.MergedPRs > 0}
 								{formatNumber(result.MergedPRs)} PRs · {formatDuration(result.AvgMergeTime)}
 							{:else if result.Stars > 0}
-								{formatNumber(result.Stars)} ★
+								<Star class="inline size-3" />{formatNumber(result.Stars)}
 							{/if}
 						</div>
 					</a>
@@ -105,7 +106,7 @@
 			<span class="text-xs text-muted-foreground">Try:</span>
 			{#each home?.PopularVisits ?? [] as v}
 				<a href={v.Path}>
-					<Badge variant="secondary" class="cursor-pointer font-mono">{v.Label} 🔥</Badge>
+					<Badge variant="secondary" class="cursor-pointer font-mono">{v.Label}</Badge>
 				</a>
 			{/each}
 			{#each home?.RecentVisits ?? [] as v}
