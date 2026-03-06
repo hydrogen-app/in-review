@@ -93,6 +93,27 @@ func main() {
 	r.Get("/blog", h.Blog)
 	r.Get("/api/blog/stats", h.BlogLiveStats)
 
+	// JSON API v1
+	r.Get("/api/v1/me", h.MeJSON)
+	r.Get("/api/v1/home", h.HomeJSON)
+	r.Get("/api/v1/search", h.SearchJSON)
+	r.Get("/api/v1/repo/{owner}/{name}", h.RepoJSON)
+	r.Get("/api/v1/sync-status/{owner}/{name}", h.SyncStatusJSON)
+	r.Get("/api/v1/user/{username}", h.UserJSON)
+	r.Get("/api/v1/org/{org}", h.OrgJSON)
+	r.Get("/api/v1/leaderboard/{category}", h.LeaderboardPageJSON)
+	r.Get("/api/v1/leaderboard/{category}/search", h.LeaderboardSearchJSON)
+	r.Get("/api/v1/stats", h.StatsJSON)
+	r.Get("/api/v1/data/repos", h.DataReposJSON)
+	r.Get("/api/v1/data/prs", h.DataPRsJSON)
+	r.Get("/api/v1/data/reviews", h.DataReviewsJSON)
+	r.Get("/api/v1/data/users", h.DataUsersJSON)
+	r.Get("/api/v1/blog", h.BlogJSON)
+	r.Get("/api/v1/dashboard", h.RequireAuth(h.DashboardJSON))
+	r.Get("/api/v1/hi", h.HiGetJSON)
+	r.Post("/api/v1/hi", h.HiPostJSON)
+	r.Get("/api/v1/hi-wall", h.HiWallJSON)
+
 	// Auth routes
 	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/github", h.AuthGitHub)
