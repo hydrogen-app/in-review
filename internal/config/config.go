@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -54,4 +56,26 @@ func Load() *Config {
 		BaseURL:                 baseURL,
 		PostHogAPIKey:           os.Getenv("POSTHOG_API_KEY"),
 	}
+}
+
+// Validate returns an error if any required configuration values are missing.
+// Call this at startup to surface missing env vars immediately.
+func (c *Config) Validate() error {
+	var missing []string
+	if c.DatabaseURL == "" {
+		missing = append(missing, "DATABASE_URL")
+	}
+	if c.SessionSecret == "" {
+		missing = append(missing, "SESSION_SECRET")
+	}
+	if c.GitHubOAuthClientID == "" {
+		missing = append(missing, "GITHUB_OAUTH_CLIENT_ID")
+	}
+	if c.GitHubOAuthClientSecret == "" {
+		missing = append(missing, "GITHUB_OAUTH_CLIENT_SECRET")
+	}
+	if len(missing) > 0 {
+		return errors.New("missing required env vars: " + strings.Join(missing, ", "))
+	}
+	return nil
 }
