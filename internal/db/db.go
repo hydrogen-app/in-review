@@ -290,6 +290,12 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_prs_repo_merged_secs ON pull_requests(repo_full_name, merge_time_secs) WHERE merged=TRUE`,
 		// idx_prs_author_merged_at covers UserActivitySeries which groups merged PRs by month per author.
 		`CREATE INDEX IF NOT EXISTS idx_prs_author_merged_at ON pull_requests(author_login, merged_at) WHERE merged=TRUE`,
+		// idx_rev_repo_reviewer covers OrgReviewerLeaderboard and OrgGatekeeperLeaderboard which
+		// JOIN reviews to repos by repo_full_name and GROUP BY reviewer_login. Without this index
+		// both queries do a full 30M-row scan of reviews for every org page load.
+		`CREATE INDEX IF NOT EXISTS idx_rev_repo_reviewer ON reviews(repo_full_name, reviewer_login, state)`,
+		// idx_page_visits_count covers PopularVisits which sorts by count DESC.
+		`CREATE INDEX IF NOT EXISTS idx_page_visits_count ON page_visits(count DESC)`,
 		// Materialized leaderboard tables. Rebuilt by RefreshLeaderboards() on a background
 		// timer so all leaderboard queries become simple indexed range scans instead of
 		// full GROUP BY aggregations on 25M+ rows.
@@ -344,6 +350,15 @@ func (d *DB) migrate() error {
 			repo_full_name   TEXT    PRIMARY KEY,
 			distinct_authors INTEGER NOT NULL DEFAULT 0
 		)`,
+		// mat_total_stats: precomputes the three global counts used by TotalStats().
+		// COUNT(*) over 30M-row tables takes ~1s each; reading one row here is <1ms.
+		`CREATE TABLE IF NOT EXISTS mat_total_stats (
+			id          INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+			repos_done  INTEGER NOT NULL DEFAULT 0,
+			merged_prs  INTEGER NOT NULL DEFAULT 0,
+			total_reviews INTEGER NOT NULL DEFAULT 0
+		)`,
+		`INSERT INTO mat_total_stats (id) VALUES (1) ON CONFLICT DO NOTHING`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -530,6 +545,13 @@ func (d *DB) RefreshLeaderboards() error {
 	defer tx.Rollback()
 
 	steps := []string{
+		// ── Total stats (global counts) ────────────────────────────────────────
+		`UPDATE mat_total_stats SET
+			repos_done    = (SELECT COUNT(*) FROM repos WHERE sync_status='done'),
+			merged_prs    = (SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE),
+			total_reviews = (SELECT COUNT(*) FROM reviews)
+		 WHERE id = 1`,
+
 		// ── Repo contribs (distinct PR authors per repo) ────────────────────────
 		// Refreshed first so global stats queries can use it immediately.
 		`DELETE FROM mat_repo_contribs`,
@@ -917,10 +939,7 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 
 func (d *DB) TotalStats() (repos, prs, reviews int) {
 	d.conn.QueryRow(`
-		SELECT
-			(SELECT COUNT(*) FROM repos WHERE sync_status='done'),
-			(SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE),
-			(SELECT COUNT(*) FROM reviews)
+		SELECT repos_done, merged_prs, total_reviews FROM mat_total_stats WHERE id=1
 	`).Scan(&repos, &prs, &reviews)
 	return
 }
