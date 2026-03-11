@@ -146,8 +146,8 @@ func New(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(10)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	d := &DB{conn: conn}
@@ -322,6 +322,27 @@ func (d *DB) migrate() error {
 			total_prs      INTEGER NOT NULL,
 			clean_pct      INTEGER NOT NULL,
 			avg_secs       BIGINT  NOT NULL DEFAULT 0
+		)`,
+		// pg_trgm enables GIN trigram indexes, required for fast ILIKE searches.
+		`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+		// Timestamp indexes missing from original schema — used by time-series queries.
+		`CREATE INDEX IF NOT EXISTS idx_rev_submitted_at ON reviews(submitted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_opened_at ON pull_requests(opened_at) WHERE merged=TRUE`,
+		// Trigram indexes for ILIKE prefix/substring searches in Data Explorer.
+		// Without these, ILIKE '%%foo%%' degrades to full table scans at 30M rows.
+		`CREATE INDEX IF NOT EXISTS idx_repos_full_name_trgm ON repos USING gin(full_name gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_author_login_trgm ON pull_requests USING gin(author_login gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_repo_full_name_trgm ON pull_requests USING gin(repo_full_name gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_rev_reviewer_login_trgm ON reviews USING gin(reviewer_login gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_login_trgm ON users USING gin(login gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_name_trgm ON users USING gin(name gin_trgm_ops)`,
+		// mat_repo_contribs: precomputes COUNT(DISTINCT author_login) per repo.
+		// Replaces the inline repo_contribs CTE in all four global stats queries,
+		// eliminating a repeated GROUP BY over 30M rows on every cache miss.
+		// Refreshed atomically by RefreshLeaderboards().
+		`CREATE TABLE IF NOT EXISTS mat_repo_contribs (
+			repo_full_name   TEXT    PRIMARY KEY,
+			distinct_authors INTEGER NOT NULL DEFAULT 0
 		)`,
 	}
 	for _, s := range stmts {
@@ -509,6 +530,14 @@ func (d *DB) RefreshLeaderboards() error {
 	defer tx.Rollback()
 
 	steps := []string{
+		// ── Repo contribs (distinct PR authors per repo) ────────────────────────
+		// Refreshed first so global stats queries can use it immediately.
+		`DELETE FROM mat_repo_contribs`,
+		`INSERT INTO mat_repo_contribs (repo_full_name, distinct_authors)
+		 SELECT repo_full_name, COUNT(DISTINCT author_login)
+		 FROM pull_requests WHERE merged=TRUE
+		 GROUP BY repo_full_name`,
+
 		// ── Reviewers ──────────────────────────────────────────────────────────
 		`DELETE FROM mat_leaderboard_reviewers`,
 		`INSERT INTO mat_leaderboard_reviewers
@@ -794,21 +823,11 @@ func (d *DB) UserAuthorStats(login string) (*AuthorStats, error) {
 }
 
 func (d *DB) UserReviewerRank(login string) (int, error) {
-	return d.rankQuery(`
-		SELECT rank FROM (
-			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM reviews GROUP BY reviewer_login
-		) sub WHERE reviewer_login=$1
-	`, login)
+	return d.rankQuery(`SELECT rank FROM mat_leaderboard_reviewers WHERE login=$1`, login)
 }
 
 func (d *DB) UserGatekeeperRank(login string) (int, error) {
-	return d.rankQuery(`
-		SELECT rank FROM (
-			SELECT reviewer_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM reviews WHERE state='CHANGES_REQUESTED' GROUP BY reviewer_login
-		) sub WHERE reviewer_login=$1
-	`, login)
+	return d.rankQuery(`SELECT rank FROM mat_leaderboard_gatekeepers WHERE login=$1`, login)
 }
 
 func (d *DB) RepoSpeedRank(fullName string) (int, error) {
@@ -830,12 +849,7 @@ func (d *DB) RepoGraveyardRank(fullName string) (int, error) {
 }
 
 func (d *DB) UserAuthorRank(login string) (int, error) {
-	return d.rankQuery(`
-		SELECT rank FROM (
-			SELECT author_login, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rank
-			FROM pull_requests WHERE merged=TRUE GROUP BY author_login
-		) sub WHERE author_login=$1
-	`, login)
+	return d.rankQuery(`SELECT rank FROM mat_leaderboard_authors WHERE login=$1`, login)
 }
 
 func (d *DB) rankQuery(q, arg string) (int, error) {
@@ -856,6 +870,7 @@ func (d *DB) OrgRepos(orgName string) ([]Repo, error) {
 		       avg_merge_time_secs, min_merge_time_secs, max_merge_time_secs
 		FROM repos WHERE org_name=$1
 		ORDER BY merged_pr_count DESC
+		LIMIT 200
 	`, orgName)
 	if err != nil {
 		return nil, err
@@ -901,9 +916,12 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 // ── Global stats ───────────────────────────────────────────────────────────────
 
 func (d *DB) TotalStats() (repos, prs, reviews int) {
-	d.conn.QueryRow(`SELECT COUNT(*) FROM repos WHERE sync_status='done'`).Scan(&repos)
-	d.conn.QueryRow(`SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE`).Scan(&prs)
-	d.conn.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviews)
+	d.conn.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM repos WHERE sync_status='done'),
+			(SELECT COUNT(*) FROM pull_requests WHERE merged=TRUE),
+			(SELECT COUNT(*) FROM reviews)
+	`).Scan(&repos, &prs, &reviews)
 	return
 }
 
@@ -1432,10 +1450,6 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 				9999999999.0
 			) AS p
 			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
-		),
-		repo_contribs AS (
-			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
-			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
 		)
 		SELECT
 			CASE
@@ -1462,12 +1476,12 @@ func (d *DB) GlobalSizeChartData(cutoffPct float64, minStars, minContribs int) (
 			COALESCE(AVG(pr.changes_requested_count)::FLOAT, 0) AS avg_changes_requested
 		FROM pull_requests pr
 		JOIN repos r ON r.full_name = pr.repo_full_name
-		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		LEFT JOIN mat_repo_contribs mrc ON mrc.repo_full_name = pr.repo_full_name
 		CROSS JOIN cutoff
 		WHERE pr.merged=TRUE AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= p)
 		  AND ($2 <= 0 OR r.stars >= $2)
-		  AND ($3 <= 0 OR rc.n >= $3)
+		  AND ($3 <= 0 OR COALESCE(mrc.distinct_authors, 0) >= $3)
 		GROUP BY bucket
 		ORDER BY bucket
 	`, cutoffPct, minStars, minContribs)
@@ -1500,10 +1514,6 @@ func (d *DB) GlobalOverallStats(minStars, minContribs int) (GlobalOverallStats, 
 	var s GlobalOverallStats
 	var avgF, medianF float64
 	err := d.conn.QueryRow(`
-		WITH repo_contribs AS (
-			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
-			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
-		)
 		SELECT
 			COUNT(*) AS total_prs,
 			COUNT(DISTINCT pr.repo_full_name) AS total_repos,
@@ -1511,10 +1521,10 @@ func (d *DB) GlobalOverallStats(minStars, minContribs int) (GlobalOverallStats, 
 			COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.merge_time_secs::FLOAT), 0) AS median_secs
 		FROM pull_requests pr
 		JOIN repos r ON r.full_name = pr.repo_full_name
-		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		LEFT JOIN mat_repo_contribs mrc ON mrc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merge_time_secs > 0
 		  AND ($1 <= 0 OR r.stars >= $1)
-		  AND ($2 <= 0 OR rc.n >= $2)
+		  AND ($2 <= 0 OR COALESCE(mrc.distinct_authors, 0) >= $2)
 	`, minStars, minContribs).Scan(&s.TotalPRs, &s.TotalRepos, &avgF, &medianF)
 	s.AvgSecs = int64(avgF)
 	s.MedianSecs = int64(medianF)
@@ -1547,10 +1557,6 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 				9999999999.0
 			) AS cutoff_val
 			FROM pull_requests WHERE merged=TRUE AND merge_time_secs > 0
-		),
-		repo_contribs AS (
-			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
-			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
 		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', pr.merged_at), 'Mon YYYY') AS label,
@@ -1583,11 +1589,11 @@ func (d *DB) GlobalTimeSeriesData(cutoffPct float64, minStars, minContribs int) 
 		FROM pull_requests pr
 		CROSS JOIN cutoff
 		JOIN repos r ON r.full_name = pr.repo_full_name
-		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		LEFT JOIN mat_repo_contribs mrc ON mrc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.merged_at IS NOT NULL AND (pr.additions + pr.deletions) > 0
 		  AND (pr.merge_time_secs IS NULL OR pr.merge_time_secs::FLOAT <= cutoff_val)
 		  AND ($2 <= 0 OR r.stars >= $2)
-		  AND ($3 <= 0 OR rc.n >= $3)
+		  AND ($3 <= 0 OR COALESCE(mrc.distinct_authors, 0) >= $3)
 		GROUP BY DATE_TRUNC('month', pr.merged_at)
 		ORDER BY DATE_TRUNC('month', pr.merged_at)
 	`, cutoffPct, minStars, minContribs)
@@ -1679,19 +1685,15 @@ func (d *DB) RepoTimeSeriesData(fullName string, cutoffPct float64) ([]TimeSerie
 // minStars / minContribs filter by repo stars and distinct PR-author count; pass 0 to skip.
 func (d *DB) GlobalOpenedSeriesData(minStars, minContribs int) ([]TimeSeriesPoint, error) {
 	rows, err := d.conn.Query(`
-		WITH repo_contribs AS (
-			SELECT repo_full_name, COUNT(DISTINCT author_login) AS n
-			FROM pull_requests WHERE merged=TRUE GROUP BY repo_full_name
-		)
 		SELECT
 			TO_CHAR(DATE_TRUNC('month', pr.opened_at), 'Mon YYYY') AS label,
 			COUNT(*) AS pr_count
 		FROM pull_requests pr
 		JOIN repos r ON r.full_name = pr.repo_full_name
-		JOIN repo_contribs rc ON rc.repo_full_name = pr.repo_full_name
+		LEFT JOIN mat_repo_contribs mrc ON mrc.repo_full_name = pr.repo_full_name
 		WHERE pr.merged=TRUE AND pr.opened_at IS NOT NULL
 		  AND ($1 <= 0 OR r.stars >= $1)
-		  AND ($2 <= 0 OR rc.n >= $2)
+		  AND ($2 <= 0 OR COALESCE(mrc.distinct_authors, 0) >= $2)
 		GROUP BY DATE_TRUNC('month', pr.opened_at)
 		ORDER BY DATE_TRUNC('month', pr.opened_at)
 	`, minStars, minContribs)
@@ -1936,7 +1938,7 @@ func (d *DB) HiTopWallPages(limit int) ([]HiWallPage, error) {
 // RandomTrackedUsers returns users with avatars in random order.
 func (d *DB) RandomTrackedUsers(limit int) ([]User, error) {
 	rows, err := d.conn.Query(`
-		SELECT login, name, avatar_url FROM users
+		SELECT login, name, avatar_url FROM users TABLESAMPLE BERNOULLI(20)
 		WHERE avatar_url != '' AND NOT is_org
 		ORDER BY RANDOM() LIMIT $1
 	`, limit)
@@ -1957,15 +1959,24 @@ func (d *DB) RandomTrackedUsers(limit int) ([]User, error) {
 
 // UserPeerReviewers returns users who reviewed PRs in repos where login authored PRs.
 func (d *DB) UserPeerReviewers(login string, limit int) ([]User, error) {
+	// Cap candidate pool to 500 before random sort to avoid sorting 30M review rows.
+	// peer_repos limits to the user's 20 most recent repos to bound the IN subquery.
 	rows, err := d.conn.Query(`
-		SELECT DISTINCT u.login, COALESCE(u.name,''), COALESCE(u.avatar_url,'')
-		FROM users u
-		JOIN reviews r ON r.reviewer_login = u.login
-		WHERE r.repo_full_name IN (
-			SELECT DISTINCT repo_full_name FROM pull_requests WHERE author_login = $1
+		WITH peer_repos AS (
+			SELECT DISTINCT repo_full_name FROM pull_requests
+			WHERE author_login = $1 LIMIT 20
+		),
+		candidates AS (
+			SELECT DISTINCT r.reviewer_login
+			FROM reviews r
+			JOIN peer_repos pr ON pr.repo_full_name = r.repo_full_name
+			WHERE r.reviewer_login != $2
+			LIMIT 500
 		)
-		AND r.reviewer_login != $2
-		AND u.avatar_url != ''
+		SELECT u.login, COALESCE(u.name,''), COALESCE(u.avatar_url,'')
+		FROM users u
+		JOIN candidates c ON c.reviewer_login = u.login
+		WHERE u.avatar_url != ''
 		ORDER BY RANDOM() LIMIT $3
 	`, login, login, limit)
 	if err != nil {

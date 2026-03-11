@@ -67,7 +67,9 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 
 	// Queue top org repos for sync
 	go func() {
-		repos, err := h.gh.GetOrgRepos(context.Background(), orgName, 20)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		repos, err := h.gh.GetOrgRepos(ctx, orgName, 20)
 		if err != nil {
 			return
 		}

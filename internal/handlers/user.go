@@ -142,7 +142,8 @@ func (h *Handler) User(w http.ResponseWriter, r *http.Request) {
 
 	// Queue top owned repos + repos where they've reviewed PRs for sync.
 	go func() {
-		bg := context.Background()
+		bg, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		if repos, err := h.gh.GetUserRepos(bg, username, 10); err == nil {
 			for _, repo := range repos {
 				h.db.UpsertRepo(db.Repo{
