@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -62,48 +63,20 @@ func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
 	return
 }
 
-func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
-	trim, cutoffPct := parseTrim(r)
-	minStars, _ := strconv.Atoi(r.URL.Query().Get("min_stars"))
-	if minStars < 0 {
-		minStars = 0
-	}
-	minContribs, _ := strconv.Atoi(r.URL.Query().Get("min_contribs"))
-	if minContribs < 0 {
-		minContribs = 0
-	}
-
-	// ── Cache check ────────────────────────────────────────────────
+// buildStatsCache runs all four global stats queries in parallel, builds the
+// StatsData payload, writes it to Redis, and returns it. Called on cache miss
+// and proactively by WarmLeaderboards for the default parameters.
+func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContribs int) StatsData {
+	cutoffPct := 1.0 - float64(trim)/100.0
 	cacheKey := fmt.Sprintf("stats:v4:%d:%d:%d", trim, minStars, minContribs)
-	if h.cache != nil {
-		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
-			var data StatsData
-			if json.Unmarshal(raw, &data) == nil {
-				data.BaseData = h.baseData(r) // not cached — set per-request
-				h.render(w, "stats", data)
-				return
-			}
-		}
-	}
 
-	// ── Parallel DB queries ────────────────────────────────────────
 	type overallRes struct {
 		v   db.GlobalOverallStats
 		err error
 	}
-	type bucketsRes struct {
-		v   []db.GlobalSizeBucket
-		err error
-	}
-	type pointsRes struct {
-		v   []db.TimeSeriesPoint
-		err error
-	}
-
-	type openedRes struct {
-		v   []db.TimeSeriesPoint
-		err error
-	}
+	type bucketsRes struct{ v []db.GlobalSizeBucket }
+	type pointsRes struct{ v []db.TimeSeriesPoint }
+	type openedRes struct{ v []db.TimeSeriesPoint }
 
 	overallCh := make(chan overallRes, 1)
 	bucketsCh := make(chan bucketsRes, 1)
@@ -115,16 +88,16 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		overallCh <- overallRes{v, err}
 	}()
 	go func() {
-		v, err := h.db.GlobalSizeChartData(cutoffPct, minStars, minContribs)
-		bucketsCh <- bucketsRes{v, err}
+		v, _ := h.db.GlobalSizeChartData(cutoffPct, minStars, minContribs)
+		bucketsCh <- bucketsRes{v}
 	}()
 	go func() {
-		v, err := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
-		pointsCh <- pointsRes{v, err}
+		v, _ := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
+		pointsCh <- pointsRes{v}
 	}()
 	go func() {
-		v, err := h.db.GlobalOpenedSeriesData(minStars, minContribs)
-		openedCh <- openedRes{v, err}
+		v, _ := h.db.GlobalOpenedSeriesData(minStars, minContribs)
+		openedCh <- openedRes{v}
 	}()
 
 	overall := <-overallCh
@@ -138,8 +111,8 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		MinStars:    minStars,
 		MinContribs: minContribs,
 		OGTitle:     "Global PR Stats — ngmi",
-		OGDesc:  "How PR size affects review time and changes requested, across all repos tracked on ngmi.",
-		OGUrl:   "https://ngmi.review/stats",
+		OGDesc:      "How PR size affects review time and changes requested, across all repos tracked on ngmi.",
+		OGUrl:       "https://ngmi.review/stats",
 	}
 
 	if len(buckets.v) > 0 {
@@ -173,7 +146,6 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 			tp.UnreviewedMergeRate = append(tp.UnreviewedMergeRate, roundTo1(p.UnreviewedRate))
 			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
-		// Build opened-per-month and merge rate aligned to merge-month labels.
 		openedMap := make(map[string]int)
 		for _, p := range opened.v {
 			openedMap[p.Label] = p.PRCount
@@ -192,13 +164,38 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ── Cache store ────────────────────────────────────────────────
 	if h.cache != nil {
 		if raw, err := json.Marshal(data); err == nil {
-			h.cache.Set(r.Context(), cacheKey, raw, rdb.CacheTTL)
+			h.cache.Set(ctx, cacheKey, raw, rdb.CacheTTL)
+		}
+	}
+	return data
+}
+
+func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
+	trim, _ := parseTrim(r)
+	minStars, _ := strconv.Atoi(r.URL.Query().Get("min_stars"))
+	if minStars < 0 {
+		minStars = 0
+	}
+	minContribs, _ := strconv.Atoi(r.URL.Query().Get("min_contribs"))
+	if minContribs < 0 {
+		minContribs = 0
+	}
+
+	cacheKey := fmt.Sprintf("stats:v4:%d:%d:%d", trim, minStars, minContribs)
+	if h.cache != nil {
+		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
+			var data StatsData
+			if json.Unmarshal(raw, &data) == nil {
+				data.BaseData = h.baseData(r)
+				h.render(w, "stats", data)
+				return
+			}
 		}
 	}
 
+	data := h.buildStatsCache(r.Context(), trim, minStars, minContribs)
 	data.BaseData = h.baseData(r)
 	h.render(w, "stats", data)
 }

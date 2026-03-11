@@ -107,7 +107,7 @@ func (h *Handler) WarmLeaderboards() {
 			log.Printf("leaderboards: refresh error: %v", err)
 			return
 		}
-		log.Printf("leaderboards: materialized tables ready, warming home cache…")
+		log.Printf("leaderboards: materialized tables ready, warming caches…")
 		// Invalidate the home Redis cache so the next rebuild reads fresh mat data.
 		h.cache.Del(ctx, homeLBCacheKey)
 		if _, err := h.buildHomeCache(ctx); err != nil {
@@ -115,6 +115,12 @@ func (h *Handler) WarmLeaderboards() {
 		} else {
 			log.Printf("leaderboards: home cache ready")
 		}
+		// Pre-warm the stats page cache for the default view (trim=0, minStars=0,
+		// minContribs=0). These queries take 45-65s on 30M rows; running them here
+		// in the background ensures users always hit a warm cache.
+		h.cache.Del(ctx, "stats:v4:0:0:0")
+		h.buildStatsCache(ctx, 0, 0, 0)
+		log.Printf("leaderboards: stats cache ready")
 	}
 
 	rebuild()
