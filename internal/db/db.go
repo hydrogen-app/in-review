@@ -301,6 +301,11 @@ func (d *DB) migrate() error {
 		// default 20% threshold triggers cleanup.
 		`ALTER TABLE repos SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		`ALTER TABLE pull_requests SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
+		// Drop idx_rev_repo_pr_time (2254 MB): entirely covered by idx_rev_repo_pr
+		// (repo_full_name, pr_number). The submitted_at column is never used as a
+		// range filter alongside repo+pr_number in any current query, making this
+		// the largest wasted index in the schema.
+		`DROP INDEX IF EXISTS idx_rev_repo_pr_time`,
 		// Materialized leaderboard tables. Rebuilt by RefreshLeaderboards() on a background
 		// timer so all leaderboard queries become simple indexed range scans instead of
 		// full GROUP BY aggregations on 25M+ rows.
