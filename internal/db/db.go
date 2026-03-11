@@ -374,6 +374,52 @@ func (d *DB) migrate() error {
 			total_reviews INTEGER NOT NULL DEFAULT 0
 		)`,
 		`INSERT INTO mat_total_stats (id) VALUES (1) ON CONFLICT DO NOTHING`,
+
+		// ── BIGSERIAL primary key migration ───────────────────────────────────────
+		// Replaces TEXT PKs (~1 GB each) with BIGINT PKs (~150-300 MB each).
+		//
+		// BEFORE FIRST DEPLOY: run the heavy steps manually against the live DB:
+		//   ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS db_id BIGINT;
+		//   ALTER TABLE reviews ADD COLUMN IF NOT EXISTS db_id BIGINT;
+		//   CREATE SEQUENCE IF NOT EXISTS pull_requests_db_id_seq;
+		//   CREATE SEQUENCE IF NOT EXISTS reviews_db_id_seq;
+		//   UPDATE pull_requests SET db_id = nextval('pull_requests_db_id_seq') WHERE db_id IS NULL;
+		//   UPDATE reviews SET db_id = nextval('reviews_db_id_seq') WHERE db_id IS NULL;
+		//   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup
+		//     ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at);
+		//
+		// After those finish, deploy — the steps below complete in milliseconds
+		// because the columns and index already exist.
+
+		// ── pull_requests ────────────────────────────────────────────────────────
+		// id is kept as a stored column; no unique index needed because UpsertPR
+		// deduplicates via ON CONFLICT(repo_full_name, number).
+		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS db_id BIGINT`,
+		`CREATE SEQUENCE IF NOT EXISTS pull_requests_db_id_seq`,
+		`UPDATE pull_requests SET db_id = nextval('pull_requests_db_id_seq') WHERE db_id IS NULL`,
+		`DO $$ BEGIN ALTER TABLE pull_requests ALTER COLUMN db_id SET DEFAULT nextval('pull_requests_db_id_seq'); EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE pull_requests ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		`SELECT setval('pull_requests_db_id_seq', COALESCE((SELECT MAX(db_id) FROM pull_requests), 1))`,
+		// Drop old TEXT PK only if it still points to id.
+		`DO $$ DECLARE col text; BEGIN SELECT a.attname INTO col FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] WHERE c.conname='pull_requests_pkey' AND c.conrelid='pull_requests'::regclass AND c.contype='p'; IF col='id' THEN ALTER TABLE pull_requests DROP CONSTRAINT pull_requests_pkey; END IF; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		// Add BIGINT PK if none exists.
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='pull_requests_pkey' AND conrelid='pull_requests'::regclass AND contype='p') THEN ALTER TABLE pull_requests ADD PRIMARY KEY (db_id); END IF; END $$`,
+
+		// ── reviews ──────────────────────────────────────────────────────────────
+		// Deduplication moves from ON CONFLICT(id) to the composite unique index
+		// idx_reviews_dedup(repo_full_name, pr_number, reviewer_login, submitted_at).
+		// id is retained as a stored column for audit purposes.
+		`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS db_id BIGINT`,
+		`CREATE SEQUENCE IF NOT EXISTS reviews_db_id_seq`,
+		`UPDATE reviews SET db_id = nextval('reviews_db_id_seq') WHERE db_id IS NULL`,
+		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET DEFAULT nextval('reviews_db_id_seq'); EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		`SELECT setval('reviews_db_id_seq', COALESCE((SELECT MAX(db_id) FROM reviews), 1))`,
+		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at)`,
+		// Drop old TEXT PK only if it still points to id.
+		`DO $$ DECLARE col text; BEGIN SELECT a.attname INTO col FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] WHERE c.conname='reviews_pkey' AND c.conrelid='reviews'::regclass AND c.contype='p'; IF col='id' THEN ALTER TABLE reviews DROP CONSTRAINT reviews_pkey; END IF; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
+		// Add BIGINT PK if none exists.
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='reviews_pkey' AND conrelid='reviews'::regclass AND contype='p') THEN ALTER TABLE reviews ADD PRIMARY KEY (db_id); END IF; END $$`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -444,7 +490,7 @@ func (d *DB) UpsertReview(r Review) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO reviews (id, repo_full_name, pr_number, reviewer_login, state, submitted_at)
 		VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT(id) DO NOTHING
+		ON CONFLICT(repo_full_name, pr_number, reviewer_login, submitted_at) DO NOTHING
 	`, r.ID, r.RepoFullName, r.PRNumber, r.ReviewerLogin, r.State, r.SubmittedAt.UTC())
 	return err
 }
