@@ -103,3 +103,4 @@ State is saved after every repo, so `Ctrl+C` loses no progress.
 - **Org pages** show in-org leaderboards and all tracked repos
 - Data is stored in SQLite and re-synced every 6 hours via background workers
 - Redis holds the sync queue, in-progress locks, response cache (5 min TTL), and rate limiting (300 req/min per IP)
+change
