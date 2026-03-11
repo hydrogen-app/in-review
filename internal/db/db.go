@@ -301,11 +301,16 @@ func (d *DB) migrate() error {
 		// default 20% threshold triggers cleanup.
 		`ALTER TABLE repos SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		`ALTER TABLE pull_requests SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
-		// Drop idx_rev_repo_pr_time (2254 MB): entirely covered by idx_rev_repo_pr
-		// (repo_full_name, pr_number). The submitted_at column is never used as a
-		// range filter alongside repo+pr_number in any current query, making this
-		// the largest wasted index in the schema.
+		// Drop redundant indexes to reclaim ~2.6 GB of RAM.
+		// idx_rev_repo_pr_time (2254 MB): covered by idx_rev_repo_pr(repo_full_name, pr_number).
+		// submitted_at is never range-filtered alongside repo+pr_number.
 		`DROP INDEX IF EXISTS idx_rev_repo_pr_time`,
+		// idx_rev_state (205 MB): reviews(state) has 3 distinct values — too low-cardinality
+		// to be useful. All state-filtered queries use idx_rev_state_reviewer(state, reviewer_login).
+		`DROP INDEX IF EXISTS idx_rev_state`,
+		// idx_prs_merged (158 MB): pull_requests(merged) is a boolean. Every WHERE merged=TRUE
+		// query also filters by author or repo, which partial indexes cover more efficiently.
+		`DROP INDEX IF EXISTS idx_prs_merged`,
 		// Materialized leaderboard tables. Rebuilt by RefreshLeaderboards() on a background
 		// timer so all leaderboard queries become simple indexed range scans instead of
 		// full GROUP BY aggregations on 25M+ rows.
