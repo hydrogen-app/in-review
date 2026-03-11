@@ -296,6 +296,11 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_rev_repo_reviewer ON reviews(repo_full_name, reviewer_login, state)`,
 		// idx_page_visits_count covers PopularVisits which sorts by count DESC.
 		`CREATE INDEX IF NOT EXISTS idx_page_visits_count ON page_visits(count DESC)`,
+		// Aggressive autovacuum for high-write tables. The worker updates repos
+		// sync_status on every sync cycle, generating dead tuples faster than the
+		// default 20% threshold triggers cleanup.
+		`ALTER TABLE repos SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
+		`ALTER TABLE pull_requests SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		// Materialized leaderboard tables. Rebuilt by RefreshLeaderboards() on a background
 		// timer so all leaderboard queries become simple indexed range scans instead of
 		// full GROUP BY aggregations on 25M+ rows.
@@ -553,8 +558,9 @@ func (d *DB) RefreshLeaderboards() error {
 		 WHERE id = 1`,
 
 		// ── Repo contribs (distinct PR authors per repo) ────────────────────────
-		// Refreshed first so global stats queries can use it immediately.
-		`DELETE FROM mat_repo_contribs`,
+		// TRUNCATE avoids dead tuples; safe because the stats page is Redis-cached
+		// so the brief empty window during this refresh is never visible to users.
+		`TRUNCATE mat_repo_contribs`,
 		`INSERT INTO mat_repo_contribs (repo_full_name, distinct_authors)
 		 SELECT repo_full_name, COUNT(DISTINCT author_login)
 		 FROM pull_requests WHERE merged=TRUE
