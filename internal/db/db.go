@@ -1868,10 +1868,11 @@ func (d *DB) OrgTimeSeriesData(orgName string, cutoffPct float64) ([]TimeSeriesP
 // ── Page visits (for "Try:" pills) ────────────────────────────────────────────
 
 type PageVisit struct {
-	Path  string
-	Kind  string
-	Label string
-	Count int
+	Path        string
+	Kind        string
+	Label       string
+	Count       int
+	LastVisited time.Time
 }
 
 func (d *DB) RecordVisit(path, kind, label string) {
@@ -1886,7 +1887,7 @@ func (d *DB) RecordVisit(path, kind, label string) {
 
 func (d *DB) PopularVisits(limit int) ([]PageVisit, error) {
 	rows, err := d.conn.Query(`
-		SELECT path, kind, label, count FROM page_visits
+		SELECT path, kind, label, count, last_visited FROM page_visits
 		ORDER BY count DESC LIMIT $1
 	`, limit)
 	if err != nil {
@@ -1899,7 +1900,7 @@ func (d *DB) PopularVisits(limit int) ([]PageVisit, error) {
 func (d *DB) RecentVisits(limit int, exclude []string) ([]PageVisit, error) {
 	if len(exclude) == 0 {
 		rows, err := d.conn.Query(`
-			SELECT path, kind, label, count FROM page_visits
+			SELECT path, kind, label, count, last_visited FROM page_visits
 			ORDER BY last_visited DESC LIMIT $1
 		`, limit)
 		if err != nil {
@@ -1917,10 +1918,22 @@ func (d *DB) RecentVisits(limit int, exclude []string) ([]PageVisit, error) {
 	}
 	args = append(args, limit)
 	rows, err := d.conn.Query(`
-		SELECT path, kind, label, count FROM page_visits
+		SELECT path, kind, label, count, last_visited FROM page_visits
 		WHERE path NOT IN (`+placeholders+`)
 		ORDER BY last_visited DESC LIMIT $`+fmt.Sprintf("%d", len(args)),
 		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanVisits(rows)
+}
+
+func (d *DB) AllRecentVisits(limit int) ([]PageVisit, error) {
+	rows, err := d.conn.Query(`
+		SELECT path, kind, label, count, last_visited FROM page_visits
+		ORDER BY last_visited DESC LIMIT $1
+	`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1932,7 +1945,7 @@ func scanVisits(rows *sql.Rows) ([]PageVisit, error) {
 	var visits []PageVisit
 	for rows.Next() {
 		var v PageVisit
-		if err := rows.Scan(&v.Path, &v.Kind, &v.Label, &v.Count); err != nil {
+		if err := rows.Scan(&v.Path, &v.Kind, &v.Label, &v.Count, &v.LastVisited); err != nil {
 			continue
 		}
 		visits = append(visits, v)
