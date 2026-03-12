@@ -79,6 +79,9 @@ func main() {
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
 
+	r.Get("/popular", h.PopularPages)
+	r.Get("/api/popular-pages", h.PopularPagesAPI)
+
 	r.Get("/data", h.DataExplorer)
 	r.Get("/data/repos", h.DataRepos)
 	r.Get("/data/prs", h.DataPRs)
