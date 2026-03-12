@@ -237,6 +237,30 @@
 
   </div>
 
+  <!-- ── Review Response Times ── -->
+  {{if .UserReviewTimes}}
+  <section class="section">
+    <h2 class="section-title">Reviewer Response Times</h2>
+    <p class="chart-hint">Average time from PR opened to first review, per reviewer. Fastest first. Requires ≥3 reviewed PRs.</p>
+    <div class="board-rows">
+      {{range $i, $u := .UserReviewTimes}}
+      <a href="/user/{{$u.Login}}" class="board-row">
+        <span class="board-rank muted">{{add $i 1}}</span>
+        {{if $u.AvatarURL}}<img src="{{$u.AvatarURL}}" class="board-avatar" alt="" />{{end}}
+        <span class="board-name mono">@{{$u.Login}}</span>
+        <span class="board-val" style="margin-left:auto;">
+          avg <strong>{{formatDuration (floatToInt64 $u.AvgResponseSecs)}}</strong>
+          &nbsp;&middot;&nbsp;
+          median <strong>{{formatDuration (floatToInt64 $u.MedianResponseSecs)}}</strong>
+          &nbsp;&middot;&nbsp;
+          <span class="muted">{{formatNumber $u.ReviewedPRs}} PRs</span>
+        </span>
+      </a>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
   <!-- ── Org Repos ── -->
   <section class="section">
     <h2 class="section-title">Repos</h2>

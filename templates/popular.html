@@ -1,0 +1,49 @@
+{{define "title"}}most viewed — ngmi{{end}}
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/" class="bc-link">ngmi</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">most viewed</span>
+</div>
+
+<div class="hi-wall-header">
+  <h1>most viewed</h1>
+  <p class="muted">pages ranked by total visits</p>
+</div>
+
+{{if .Popular}}
+<div class="hi-wall-list">
+  {{range $i, $p := .Popular}}
+  <a href="{{$p.Path}}" class="hi-wall-row">
+    <span class="hi-wall-rank muted">{{add $i 1}}</span>
+    <span class="hi-wall-label">
+      {{$p.Label}}
+      {{if $p.Kind}}<span class="muted" style="font-size:0.75em;margin-left:0.4em;">({{$p.Kind}})</span>{{end}}
+    </span>
+    <span class="hi-wall-stats muted">{{formatNumber $p.Count}} views</span>
+  </a>
+  {{end}}
+</div>
+{{else}}
+<p class="muted" style="padding:2rem 0;">no visits recorded yet.</p>
+{{end}}
+
+{{if .Recent}}
+<div class="hi-wall-header" style="margin-top:3rem;">
+  <h2>recently visited</h2>
+  <p class="muted">pages visited most recently (not in top 50 above)</p>
+</div>
+<div class="hi-wall-list">
+  {{range $p := .Recent}}
+  <a href="{{$p.Path}}" class="hi-wall-row">
+    <span class="hi-wall-rank muted">—</span>
+    <span class="hi-wall-label">
+      {{$p.Label}}
+      {{if $p.Kind}}<span class="muted" style="font-size:0.75em;margin-left:0.4em;">({{$p.Kind}})</span>{{end}}
+    </span>
+    <span class="hi-wall-stats muted">{{formatNumber $p.Count}} views</span>
+  </a>
+  {{end}}
+</div>
+{{end}}
+{{end}}

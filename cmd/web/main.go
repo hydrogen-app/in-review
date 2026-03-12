@@ -75,6 +75,7 @@ func main() {
 	r.Get("/api/user/{username}/charts", h.UserCharts)
 	r.Post("/api/sync/{owner}/{name}", h.TriggerSync)
 	r.Get("/api/sync-status/{owner}/{name}", h.SyncStatus)
+	r.Get("/popular", h.Popular)
 	r.Get("/hi-wall", h.HiWall)
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
