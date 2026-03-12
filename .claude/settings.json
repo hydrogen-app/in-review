@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jj status > /dev/null 2>&1"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -X POST http://localhost:7436/checkpoint -H 'Content-Type: application/json' -d '{\"description\":\"session-start\"}' > /dev/null 2>&1; cat /Users/wyatsoule/Sites/In_Review-in-2/.jjd-task-prompt 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

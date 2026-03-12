@@ -162,7 +162,7 @@ func New(database *db.DB, gh *github.Client, w Queuer, cache *rdb.Client, cfg *c
 func (h *Handler) loadTemplates() {
 	h.tmpls = make(map[string]*template.Template)
 
-	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats", "dashboard"}
+	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats", "dashboard", "popular"}
 	for _, page := range pages {
 		tmpl := template.Must(
 			template.New("").Funcs(h.funcMap).ParseFiles(

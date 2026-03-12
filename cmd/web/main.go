@@ -85,6 +85,7 @@ func main() {
 	r.Get("/data/reviews", h.DataReviews)
 	r.Get("/data/users", h.DataUsers)
 
+	r.Get("/popular", h.Popular)
 	r.Get("/blog", h.Blog)
 	r.Get("/api/blog/stats", h.BlogLiveStats)
 
