@@ -143,6 +143,7 @@ func New(database *db.DB, gh *github.Client, w Queuer, cache *rdb.Client, cfg *c
 			}
 			return (a * 100) / b
 		},
+		"timeAgoVal": func(t time.Time) string { return timeAgo(&t) },
 		"add": func(a, b int) int { return a + b },
 		"sub": func(a, b int) int { return a - b },
 		"deref64": func(p *int64) int64 {
@@ -162,7 +163,7 @@ func New(database *db.DB, gh *github.Client, w Queuer, cache *rdb.Client, cfg *c
 func (h *Handler) loadTemplates() {
 	h.tmpls = make(map[string]*template.Template)
 
-	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats", "dashboard"}
+	pages := []string{"home", "repo", "user", "org", "leaderboard_page", "error", "hi_wall", "stats", "dashboard", "comments"}
 	for _, page := range pages {
 		tmpl := template.Must(
 			template.New("").Funcs(h.funcMap).ParseFiles(
