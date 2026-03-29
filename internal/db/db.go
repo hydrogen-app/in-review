@@ -146,9 +146,10 @@ func New(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
-	conn.SetMaxOpenConns(50)
-	conn.SetMaxIdleConns(10)
+	conn.SetMaxOpenConns(10)
+	conn.SetMaxIdleConns(3)
 	conn.SetConnMaxLifetime(5 * time.Minute)
+	conn.SetConnMaxIdleTime(2 * time.Minute)
 
 	d := &DB{conn: conn}
 	return d, d.migrate()
@@ -416,6 +417,21 @@ func (d *DB) migrate() error {
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`SELECT setval('reviews_db_id_seq', COALESCE((SELECT MAX(db_id) FROM reviews), 1))`,
 		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at)`,
+
+		// Drop the three large GIN trigram indexes on pull_requests and reviews.
+		// These are the primary driver of high RAM usage — GIN indexes on 25-30M row
+		// tables with many distinct values are kept hot in shared_buffers and can
+		// consume 3-6 GB each. The Data Explorer searches are switched to prefix
+		// matching which uses small B-tree text_pattern_ops indexes instead.
+		`DROP INDEX IF EXISTS idx_prs_author_login_trgm`,
+		`DROP INDEX IF EXISTS idx_prs_repo_full_name_trgm`,
+		`DROP INDEX IF EXISTS idx_rev_reviewer_login_trgm`,
+		// Small B-tree prefix indexes for Data Explorer searches.
+		// text_pattern_ops allows LIKE 'foo%' (prefix) queries without locale constraints.
+		`CREATE INDEX IF NOT EXISTS idx_prs_author_prefix ON pull_requests(author_login text_pattern_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_prs_repo_prefix ON pull_requests(repo_full_name text_pattern_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_rev_reviewer_prefix ON reviews(reviewer_login text_pattern_ops)`,
+
 		// Drop old TEXT PK only if it still points to id.
 		`DO $$ DECLARE col text; BEGIN SELECT a.attname INTO col FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] WHERE c.conname='reviews_pkey' AND c.conrelid='reviews'::regclass AND c.contype='p'; IF col='id' THEN ALTER TABLE reviews DROP CONSTRAINT reviews_pkey; END IF; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		// Add BIGINT PK if none exists.
@@ -2323,8 +2339,8 @@ func (d *DB) ListPRsFiltered(limit, offset int, repo, author, sortBy string) ([]
 		       COUNT(*) OVER() AS total
 		FROM pull_requests
 		WHERE merged = TRUE
-		  AND ($1 = '' OR repo_full_name ILIKE '%%' || $1 || '%%')
-		  AND ($2 = '' OR author_login ILIKE '%%' || $2 || '%%')
+		  AND ($1 = '' OR repo_full_name LIKE $1 || '%%')
+		  AND ($2 = '' OR author_login LIKE $2 || '%%')
 		ORDER BY %s %s NULLS LAST
 		LIMIT $3 OFFSET $4
 	`, col, dir)
@@ -2366,7 +2382,7 @@ func (d *DB) ListReviewsFiltered(limit, offset int, reviewer, state string) ([]R
 		SELECT id, repo_full_name, pr_number, reviewer_login, state, submitted_at,
 		       COUNT(*) OVER() AS total
 		FROM reviews
-		WHERE ($1 = '' OR reviewer_login ILIKE '%' || $1 || '%')
+		WHERE ($1 = '' OR reviewer_login LIKE $1 || '%')
 		  AND ($2 = '' OR state = $2)
 		ORDER BY submitted_at DESC
 		LIMIT $3 OFFSET $4
