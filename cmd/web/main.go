@@ -88,6 +88,9 @@ func main() {
 	r.Get("/blog", h.Blog)
 	r.Get("/api/blog/stats", h.BlogLiveStats)
 
+	r.Get("/recently-viewed", h.RecentlyViewed)
+	r.Get("/api/recently-viewed", h.RecentlyViewedAPI)
+
 	r.Get("/auth/login", h.AuthLogin)
 	r.Get("/auth/github", h.AuthGitHub)
 	r.Get("/auth/github/callback", h.AuthGitHubCallback)

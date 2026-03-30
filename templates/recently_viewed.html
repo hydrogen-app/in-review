@@ -1,0 +1,57 @@
+{{define "title"}}Recently Viewed — ngmi{{end}}
+
+{{define "content"}}
+<div class="page-wrap">
+
+  <!-- ── Breadcrumb ── -->
+  <div class="breadcrumb">
+    <a href="/" class="bc-link">ngmi</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">recently viewed</span>
+  </div>
+
+  <!-- ── Page Header ── -->
+  <div class="repo-header">
+    <div class="repo-title-row">
+      <h1 class="page-title mono">Recently Viewed</h1>
+    </div>
+    <p class="repo-desc">The most recently visited repos, users, and orgs across all visitors.</p>
+  </div>
+
+  {{if .Visits}}
+  <div class="pr-table-wrap">
+    <table class="pr-table">
+      <thead>
+        <tr>
+          <th>Kind</th>
+          <th>Name</th>
+          <th>Views</th>
+          <th>Last Visited</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Visits}}
+        <tr class="pr-row">
+          <td>
+            <span class="pill {{if eq .Kind "repo"}}pill-hot{{else if eq .Kind "user"}}pill{{else}}pill{{end}}" style="font-size:0.7rem;padding:2px 8px;">
+              {{.Kind}}
+            </span>
+          </td>
+          <td>
+            <a href="{{.Path}}" class="pr-link mono">{{.Label}}</a>
+          </td>
+          <td class="muted">{{formatNumber .Count}}</td>
+          <td class="muted">{{.LastVisited.Format "Jan 2, 2006 15:04 UTC"}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <p class="muted">No pages have been viewed yet. <a href="/" class="link">Search for a repo →</a></p>
+  </div>
+  {{end}}
+
+</div>
+{{end}}
