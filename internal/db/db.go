@@ -1013,6 +1013,62 @@ func (d *DB) OrgGatekeeperLeaderboard(orgName string, limit int) ([]LeaderboardE
 	return scanLeaderboardEntries(rows)
 }
 
+// OrgUserReviewTime holds per-user review response time stats for an org.
+type OrgUserReviewTime struct {
+	Login              string
+	AvatarURL          string
+	ReviewedPRs        int
+	AvgResponseSecs    float64
+	MedianResponseSecs float64
+}
+
+// OrgUserReviewTimes returns each reviewer's average and median time-to-first-review
+// across all merged PRs in the org, sorted fastest first.
+// Only reviewers with at least 3 reviewed PRs are included.
+func (d *DB) OrgUserReviewTimes(orgName string, limit int) ([]OrgUserReviewTime, error) {
+	rows, err := d.conn.Query(`
+		SELECT
+			sub.reviewer_login,
+			MAX(COALESCE(u.avatar_url, ''))                                              AS avatar_url,
+			COUNT(*)                                                                     AS reviewed_prs,
+			AVG(sub.first_response_secs)::FLOAT                                         AS avg_response_secs,
+			percentile_cont(0.5) WITHIN GROUP (ORDER BY sub.first_response_secs)::FLOAT AS median_response_secs
+		FROM (
+			SELECT
+				r.reviewer_login,
+				pr.repo_full_name,
+				pr.number,
+				EXTRACT(EPOCH FROM (MIN(r.submitted_at) - pr.opened_at)) AS first_response_secs
+			FROM reviews r
+			JOIN pull_requests pr ON pr.repo_full_name = r.repo_full_name AND pr.number = r.pr_number
+			JOIN repos repo       ON repo.full_name = r.repo_full_name
+			WHERE (repo.org_name = $1 OR repo.owner = $1)
+			  AND pr.merged = TRUE
+			  AND r.submitted_at > pr.opened_at
+			GROUP BY r.reviewer_login, pr.repo_full_name, pr.number
+		) sub
+		LEFT JOIN users u ON u.login = sub.reviewer_login
+		GROUP BY sub.reviewer_login
+		HAVING COUNT(*) >= 3
+		ORDER BY avg_response_secs ASC
+		LIMIT $2
+	`, orgName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OrgUserReviewTime
+	for rows.Next() {
+		var e OrgUserReviewTime
+		if err := rows.Scan(&e.Login, &e.AvatarURL, &e.ReviewedPRs, &e.AvgResponseSecs, &e.MedianResponseSecs); err != nil {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ── Global stats ───────────────────────────────────────────────────────────────
 
 func (d *DB) TotalStats() (repos, prs, reviews int) {

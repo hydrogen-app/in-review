@@ -17,6 +17,7 @@ type OrgData struct {
 	Repos           []db.Repo
 	ReviewerBoard   []db.LeaderboardEntry
 	GatekeeperBoard []db.LeaderboardEntry
+	UserReviewTimes []db.OrgUserReviewTime
 	TotalMergedPRs  int
 	TotalReviews    int
 	IsSyncing       bool
@@ -122,6 +123,7 @@ func (h *Handler) Org(w http.ResponseWriter, r *http.Request) {
 	}
 	data.ReviewerBoard, _ = h.db.OrgReviewerLeaderboard(orgName, 10)
 	data.GatekeeperBoard, _ = h.db.OrgGatekeeperLeaderboard(orgName, 10)
+	data.UserReviewTimes, _ = h.db.OrgUserReviewTimes(orgName, 30)
 
 	if points, err := h.db.OrgTimeSeriesData(orgName, cutoffPct); err == nil && len(points) > 0 {
 		tp := timeChartPayload{}
