@@ -79,6 +79,9 @@ func main() {
 	r.Get("/api/hi", h.HiGet)
 	r.Post("/api/hi", h.HiPost)
 
+	r.Get("/comments", h.CommentsPage)
+	r.Post("/api/comments", h.RequireAuth(h.CommentPost))
+
 	r.Get("/data", h.DataExplorer)
 	r.Get("/data/repos", h.DataRepos)
 	r.Get("/data/prs", h.DataPRs)

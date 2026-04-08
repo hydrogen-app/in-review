@@ -121,6 +121,14 @@ type CollabEntry struct {
 	Count     int
 }
 
+// Comment is a user-authored comment on the site.
+type Comment struct {
+	ID          int64
+	AuthorLogin string
+	Content     string
+	CreatedAt   time.Time
+}
+
 // UserRepoReview is a repo the user has reviewed PRs in, with a count.
 type UserRepoReview struct {
 	FullName string
@@ -436,6 +444,15 @@ func (d *DB) migrate() error {
 		`DO $$ DECLARE col text; BEGIN SELECT a.attname INTO col FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1] WHERE c.conname='reviews_pkey' AND c.conrelid='reviews'::regclass AND c.contype='p'; IF col='id' THEN ALTER TABLE reviews DROP CONSTRAINT reviews_pkey; END IF; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		// Add BIGINT PK if none exists.
 		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='reviews_pkey' AND conrelid='reviews'::regclass AND contype='p') THEN ALTER TABLE reviews ADD PRIMARY KEY (db_id); END IF; END $$`,
+
+		// ── comments ─────────────────────────────────────────────────────────────
+		`CREATE TABLE IF NOT EXISTS comments (
+			id           BIGSERIAL   PRIMARY KEY,
+			author_login TEXT        NOT NULL,
+			content      TEXT        NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000),
+			created_at   TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at DESC)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.conn.Exec(s); err != nil {
@@ -2442,4 +2459,41 @@ func (d *DB) ListUsersFiltered(limit, offset int, search string) ([]User, int, e
 		users = append(users, u)
 	}
 	return users, total, rows.Err()
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────────
+
+// CommentCreate inserts a new comment and returns it.
+func (d *DB) CommentCreate(authorLogin, content string) (Comment, error) {
+	var c Comment
+	err := d.conn.QueryRow(`
+		INSERT INTO comments (author_login, content)
+		VALUES ($1, $2)
+		RETURNING id, author_login, content, created_at
+	`, authorLogin, content).Scan(&c.ID, &c.AuthorLogin, &c.Content, &c.CreatedAt)
+	return c, err
+}
+
+// CommentsGetAll returns the most recent comments, newest first.
+func (d *DB) CommentsGetAll(limit int) ([]Comment, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, author_login, content, created_at
+		FROM comments
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Comment
+	for rows.Next() {
+		var c Comment
+		if err := rows.Scan(&c.ID, &c.AuthorLogin, &c.Content, &c.CreatedAt); err != nil {
+			log.Printf("db: CommentsGetAll scan: %v", err)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

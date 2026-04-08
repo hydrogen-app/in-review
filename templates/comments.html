@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/" class="bc-link">ngmi</a>
+  <span class="bc-sep">/</span>
+  <span class="bc-current">comments</span>
+</div>
+
+<div class="comments-header">
+  <h1>comments</h1>
+  <p class="muted">leave a note for the world</p>
+</div>
+
+{{if .CurrentUser}}
+<form class="comment-form"
+      hx-post="/api/comments"
+      hx-target="#comments-list"
+      hx-swap="afterbegin"
+      hx-on::after-request="if(event.detail.successful) this.reset()">
+  <textarea
+    name="content"
+    class="comment-input"
+    placeholder="what's on your mind?"
+    maxlength="2000"
+    rows="3"
+    required
+  ></textarea>
+  <div class="comment-form-footer">
+    <span class="muted comment-as">commenting as <strong>{{.CurrentUser}}</strong></span>
+    <button type="submit" class="btn-primary">post</button>
+  </div>
+</form>
+{{else}}
+<div class="comment-login-prompt">
+  <a href="/auth/login" class="btn-primary">login to comment</a>
+  <span class="muted">GitHub login required</span>
+</div>
+{{end}}
+
+<div id="comments-list" class="comments-list">
+  {{if .Comments}}
+    {{range .Comments}}
+    <div class="comment" id="comment-{{.ID}}">
+      <div class="comment-meta">
+        <a href="/user/{{.AuthorLogin}}" class="comment-author">{{.AuthorLogin}}</a>
+        <span class="comment-time muted">{{timeAgoVal .CreatedAt}}</span>
+      </div>
+      <p class="comment-body">{{.Content}}</p>
+    </div>
+    {{end}}
+  {{else}}
+  <p class="muted" style="padding:2rem 0;">no comments yet. be the first!</p>
+  {{end}}
+</div>
+{{end}}
