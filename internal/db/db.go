@@ -345,19 +345,20 @@ func (d *DB) migrate() error {
 			clean_pct      INTEGER NOT NULL,
 			avg_secs       BIGINT  NOT NULL DEFAULT 0
 		)`,
-		// pg_trgm enables GIN trigram indexes, required for fast ILIKE searches.
+		// pg_trgm kept for repos/users prefix search (lightweight tables).
 		`CREATE EXTENSION IF NOT EXISTS pg_trgm`,
 		// Timestamp indexes missing from original schema — used by time-series queries.
 		`CREATE INDEX IF NOT EXISTS idx_rev_submitted_at ON reviews(submitted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_opened_at ON pull_requests(opened_at) WHERE merged=TRUE`,
-		// Trigram indexes for ILIKE prefix/substring searches in Data Explorer.
-		// Without these, ILIKE '%%foo%%' degrades to full table scans at 30M rows.
-		`CREATE INDEX IF NOT EXISTS idx_repos_full_name_trgm ON repos USING gin(full_name gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_prs_author_login_trgm ON pull_requests USING gin(author_login gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_prs_repo_full_name_trgm ON pull_requests USING gin(repo_full_name gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_rev_reviewer_login_trgm ON reviews USING gin(reviewer_login gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_users_login_trgm ON users USING gin(login gin_trgm_ops)`,
-		`CREATE INDEX IF NOT EXISTS idx_users_name_trgm ON users USING gin(name gin_trgm_ops)`,
+
+		// Drop ALL GIN trigram indexes — they consume 3-6 GB RAM each on large tables.
+		// Replaced by small B-tree text_pattern_ops indexes below.
+		`DROP INDEX IF EXISTS idx_prs_author_login_trgm`,
+		`DROP INDEX IF EXISTS idx_prs_repo_full_name_trgm`,
+		`DROP INDEX IF EXISTS idx_rev_reviewer_login_trgm`,
+		`DROP INDEX IF EXISTS idx_repos_full_name_trgm`,
+		`DROP INDEX IF EXISTS idx_users_login_trgm`,
+		`DROP INDEX IF EXISTS idx_users_name_trgm`,
 		// mat_repo_contribs: precomputes COUNT(DISTINCT author_login) per repo.
 		// Replaces the inline repo_contribs CTE in all four global stats queries,
 		// eliminating a repeated GROUP BY over 30M rows on every cache miss.
@@ -416,16 +417,11 @@ func (d *DB) migrate() error {
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET DEFAULT nextval('reviews_db_id_seq'); EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`SELECT setval('reviews_db_id_seq', COALESCE((SELECT MAX(db_id) FROM reviews), 1))`,
-		`CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at)`,
+		// NOT CONCURRENTLY — CONCURRENTLY cannot run inside a transaction and
+		// sql.DB.Exec uses implicit transactions, which caused this to silently
+		// fail and left UpsertReview broken (no unique constraint to match ON CONFLICT).
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_dedup ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at)`,
 
-		// Drop the three large GIN trigram indexes on pull_requests and reviews.
-		// These are the primary driver of high RAM usage — GIN indexes on 25-30M row
-		// tables with many distinct values are kept hot in shared_buffers and can
-		// consume 3-6 GB each. The Data Explorer searches are switched to prefix
-		// matching which uses small B-tree text_pattern_ops indexes instead.
-		`DROP INDEX IF EXISTS idx_prs_author_login_trgm`,
-		`DROP INDEX IF EXISTS idx_prs_repo_full_name_trgm`,
-		`DROP INDEX IF EXISTS idx_rev_reviewer_login_trgm`,
 		// Small B-tree prefix indexes for Data Explorer searches.
 		// text_pattern_ops allows LIKE 'foo%' (prefix) queries without locale constraints.
 		`CREATE INDEX IF NOT EXISTS idx_prs_author_prefix ON pull_requests(author_login text_pattern_ops)`,
