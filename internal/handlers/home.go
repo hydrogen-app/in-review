@@ -16,20 +16,20 @@ import (
 
 type HomeData struct {
 	BaseData
-	TotalRepos      int
-	TotalPRs        int
-	TotalReviews    int
-	SpeedDemons     []db.LeaderboardEntry
-	PRGraveyard     []db.LeaderboardEntry
-	ReviewChamps    []db.LeaderboardEntry
-	Gatekeepers     []db.LeaderboardEntry
-	MergeMasters    []db.LeaderboardEntry
-	OneShot         []db.LeaderboardEntry
-	PopularVisits   []db.PageVisit
-	RecentVisits    []db.PageVisit
-	OGTitle         string
-	OGDesc          string
-	OGUrl           string
+	TotalRepos    int
+	TotalPRs      int
+	TotalReviews  int
+	SpeedDemons   []db.LeaderboardEntry
+	PRGraveyard   []db.LeaderboardEntry
+	ReviewChamps  []db.LeaderboardEntry
+	Gatekeepers   []db.LeaderboardEntry
+	MergeMasters  []db.LeaderboardEntry
+	OneShot       []db.LeaderboardEntry
+	PopularVisits []db.PageVisit
+	RecentVisits  []db.PageVisit
+	OGTitle       string
+	OGDesc        string
+	OGUrl         string
 }
 
 // homeLBCache holds all data needed to render the home page, cached together
@@ -115,17 +115,23 @@ func (h *Handler) WarmLeaderboards() {
 		} else {
 			log.Printf("leaderboards: home cache ready")
 		}
-		// Pre-warm the stats page cache for the default view (trim=0, minStars=0,
-		// minContribs=0). These queries take 45-65s on 30M rows; running them here
-		// in the background ensures users always hit a warm cache.
-		h.cache.Del(ctx, "stats:v4:0:0:0")
-		h.buildStatsCache(ctx, 0, 0, 0)
-		log.Printf("leaderboards: stats cache ready")
+		if h.cfg.WarmStats {
+			// The stats queries use percentile calculations over the full PR table.
+			// Keep this opt-in on managed Postgres plans; cold /stats requests can
+			// populate the cache without making every deploy and refresh expensive.
+			h.cache.Del(ctx, "stats:v4:0:0:0")
+			h.buildStatsCache(ctx, 0, 0, 0)
+			log.Printf("leaderboards: stats cache ready")
+		}
 	}
 
 	rebuild()
 
-	ticker := time.NewTicker(15 * time.Minute)
+	if h.cfg.LeaderboardRefreshEvery <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(h.cfg.LeaderboardRefreshEvery)
 	defer ticker.Stop()
 	for range ticker.C {
 		rebuild()

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type Config struct {
@@ -19,6 +21,36 @@ type Config struct {
 	SessionSecret           string
 	BaseURL                 string
 	PostHogAPIKey           string
+	WarmLeaderboards        bool
+	WarmStats               bool
+	LeaderboardRefreshEvery time.Duration
+}
+
+func boolEnv(key string, fallback bool) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if raw == "" {
+		return fallback
+	}
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return fallback
+	}
+	return d
 }
 
 func Load() *Config {
@@ -53,5 +85,8 @@ func Load() *Config {
 		SessionSecret:           os.Getenv("SESSION_SECRET"),
 		BaseURL:                 baseURL,
 		PostHogAPIKey:           os.Getenv("POSTHOG_API_KEY"),
+		WarmLeaderboards:        boolEnv("WARM_LEADERBOARDS", true),
+		WarmStats:               boolEnv("WARM_STATS", false),
+		LeaderboardRefreshEvery: durationEnv("LEADERBOARD_REFRESH_INTERVAL", time.Hour),
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -15,6 +16,18 @@ import (
 // DB wraps the Postgres connection pool.
 type DB struct {
 	conn *sql.DB
+}
+
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // ── Model types ────────────────────────────────────────────────────────────────
@@ -108,9 +121,9 @@ type AuthorStats struct {
 
 // UserActivityPoint holds one month's author + reviewer activity for a user.
 type UserActivityPoint struct {
-	Label               string
-	PRCount             int
-	ReviewCount         int
+	Label                string
+	PRCount              int
+	ReviewCount          int
 	ChangesRequestedRate float64
 }
 
@@ -146,8 +159,13 @@ func New(databaseURL string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
-	conn.SetMaxOpenConns(10)
-	conn.SetMaxIdleConns(3)
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", 5)
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", 2)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	conn.SetMaxOpenConns(maxOpen)
+	conn.SetMaxIdleConns(maxIdle)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 	conn.SetConnMaxIdleTime(2 * time.Minute)
 
@@ -387,6 +405,15 @@ func (d *DB) migrate() error {
 		//   CREATE SEQUENCE IF NOT EXISTS reviews_db_id_seq;
 		//   UPDATE pull_requests SET db_id = nextval('pull_requests_db_id_seq') WHERE db_id IS NULL;
 		//   UPDATE reviews SET db_id = nextval('reviews_db_id_seq') WHERE db_id IS NULL;
+		//   DELETE FROM reviews r USING (
+		//     SELECT db_id FROM (
+		//       SELECT db_id, ROW_NUMBER() OVER (
+		//         PARTITION BY repo_full_name, pr_number, reviewer_login, submitted_at
+		//         ORDER BY db_id
+		//       ) AS rn
+		//       FROM reviews
+		//     ) d WHERE rn > 1
+		//   ) dup WHERE r.db_id = dup.db_id;
 		//   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup
 		//     ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at);
 		//
@@ -417,6 +444,22 @@ func (d *DB) migrate() error {
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET DEFAULT nextval('reviews_db_id_seq'); EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`SELECT setval('reviews_db_id_seq', COALESCE((SELECT MAX(db_id) FROM reviews), 1))`,
+		// Older versions used GitHub's review ID as the primary key, but retries
+		// and pagination edge cases could still leave duplicate logical reviews in
+		// local/dev databases. Keep the oldest row so the unique dedupe index can
+		// be created idempotently.
+		`DELETE FROM reviews r USING (
+			SELECT db_id FROM (
+				SELECT db_id,
+				       ROW_NUMBER() OVER (
+				           PARTITION BY repo_full_name, pr_number, reviewer_login, submitted_at
+				           ORDER BY db_id
+				       ) AS rn
+				FROM reviews
+			) d
+			WHERE rn > 1
+		) dup
+		WHERE r.db_id = dup.db_id`,
 		// NOT CONCURRENTLY — CONCURRENTLY cannot run inside a transaction and
 		// sql.DB.Exec uses implicit transactions, which caused this to silently
 		// fail and left UpsertReview broken (no unique constraint to match ON CONFLICT).

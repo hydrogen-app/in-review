@@ -63,50 +63,21 @@ func parseTrim(r *http.Request) (trim int, cutoffPct float64) {
 	return
 }
 
-// buildStatsCache runs all four global stats queries in parallel, builds the
-// StatsData payload, writes it to Redis, and returns it. Called on cache miss
-// and proactively by WarmLeaderboards for the default parameters.
+// buildStatsCache runs the global stats queries, builds the StatsData payload,
+// writes it to Redis, and returns it. These queries include percentile sorts on
+// very large tables, so they intentionally run serially to keep Postgres memory
+// bounded on managed plans.
 func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContribs int) StatsData {
 	cutoffPct := 1.0 - float64(trim)/100.0
 	cacheKey := fmt.Sprintf("stats:v4:%d:%d:%d", trim, minStars, minContribs)
 
-	type overallRes struct {
-		v   db.GlobalOverallStats
-		err error
-	}
-	type bucketsRes struct{ v []db.GlobalSizeBucket }
-	type pointsRes struct{ v []db.TimeSeriesPoint }
-	type openedRes struct{ v []db.TimeSeriesPoint }
-
-	overallCh := make(chan overallRes, 1)
-	bucketsCh := make(chan bucketsRes, 1)
-	pointsCh := make(chan pointsRes, 1)
-	openedCh := make(chan openedRes, 1)
-
-	go func() {
-		v, err := h.db.GlobalOverallStats(minStars, minContribs)
-		overallCh <- overallRes{v, err}
-	}()
-	go func() {
-		v, _ := h.db.GlobalSizeChartData(cutoffPct, minStars, minContribs)
-		bucketsCh <- bucketsRes{v}
-	}()
-	go func() {
-		v, _ := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
-		pointsCh <- pointsRes{v}
-	}()
-	go func() {
-		v, _ := h.db.GlobalOpenedSeriesData(minStars, minContribs)
-		openedCh <- openedRes{v}
-	}()
-
-	overall := <-overallCh
-	buckets := <-bucketsCh
-	points := <-pointsCh
-	opened := <-openedCh
+	overall, _ := h.db.GlobalOverallStats(minStars, minContribs)
+	buckets, _ := h.db.GlobalSizeChartData(cutoffPct, minStars, minContribs)
+	points, _ := h.db.GlobalTimeSeriesData(cutoffPct, minStars, minContribs)
+	opened, _ := h.db.GlobalOpenedSeriesData(minStars, minContribs)
 
 	data := StatsData{
-		Overall:     overall.v,
+		Overall:     overall,
 		Trim:        trim,
 		MinStars:    minStars,
 		MinContribs: minContribs,
@@ -115,9 +86,9 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 		OGUrl:       "https://ngmi.review/stats",
 	}
 
-	if len(buckets.v) > 0 {
+	if len(buckets) > 0 {
 		payload := statsChartPayload{}
-		for _, b := range buckets.v {
+		for _, b := range buckets {
 			payload.Labels = append(payload.Labels, b.Label)
 			payload.PRCounts = append(payload.PRCounts, b.PRCount)
 			payload.AvgHours = append(payload.AvgHours, roundTo1(b.AvgSecs/3600))
@@ -131,9 +102,9 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 		}
 	}
 
-	if len(points.v) > 0 {
+	if len(points) > 0 {
 		tp := timeChartPayload{}
-		for _, p := range points.v {
+		for _, p := range points {
 			tp.Labels = append(tp.Labels, p.Label)
 			tp.PRCounts = append(tp.PRCounts, p.PRCount)
 			tp.AvgSize = append(tp.AvgSize, roundTo1(p.AvgSize))
@@ -147,7 +118,7 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
 		openedMap := make(map[string]int)
-		for _, p := range opened.v {
+		for _, p := range opened {
 			openedMap[p.Label] = p.PRCount
 		}
 		for i, label := range tp.Labels {

@@ -96,10 +96,15 @@ func main() {
 
 	r.Get("/dashboard", h.RequireAuth(h.Dashboard))
 	r.Post("/api/repos/add", h.RequireAuth(h.AddRepo))
+	h.RegisterNextRoutes(r)
 
 	// Rebuild materialized leaderboard tables and keep them fresh.
 	// Also warms the home page Redis cache. Prevents 30+ second cold-cache hits.
-	go h.WarmLeaderboards()
+	if cfg.WarmLeaderboards {
+		go h.WarmLeaderboards()
+	} else {
+		log.Println("leaderboards: background refresh disabled (WARM_LEADERBOARDS=false)")
+	}
 
 	log.Printf("ngmi web listening on http://localhost:%s", cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, r))

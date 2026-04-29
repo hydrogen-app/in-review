@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"inreview/internal/db"
@@ -20,8 +22,24 @@ type BlogData struct {
 	OGUrl        string
 }
 
+// cachedDefaultOverallStats avoids running the expensive global median query
+// from the blog/live-stats path. The /stats page owns that cache; if it has not
+// been populated yet, the live widget still shows cheap precomputed counts.
+func (h *Handler) cachedDefaultOverallStats(ctx context.Context) db.GlobalOverallStats {
+	if h.cache != nil {
+		if raw, ok := h.cache.Get(ctx, "stats:v4:0:0:0"); ok {
+			var stats StatsData
+			if json.Unmarshal(raw, &stats) == nil {
+				return stats.Overall
+			}
+		}
+	}
+	totalRepos, totalPRs, _ := h.db.TotalStats()
+	return db.GlobalOverallStats{TotalPRs: totalPRs, TotalRepos: totalRepos}
+}
+
 func (h *Handler) Blog(w http.ResponseWriter, r *http.Request) {
-	overall, _ := h.db.GlobalOverallStats(0, 0)
+	overall := h.cachedDefaultOverallStats(r.Context())
 	topReviewers, _ := h.db.LeaderboardReviewers(5)
 	topSpeed, _ := h.db.LeaderboardReposBySpeed("ASC", 5)
 	totalRepos, totalPRs, totalReviews := h.db.TotalStats()
@@ -43,7 +61,7 @@ func (h *Handler) Blog(w http.ResponseWriter, r *http.Request) {
 
 // BlogLiveStats serves the live stats partial for HTMX polling.
 func (h *Handler) BlogLiveStats(w http.ResponseWriter, r *http.Request) {
-	overall, _ := h.db.GlobalOverallStats(0, 0)
+	overall := h.cachedDefaultOverallStats(r.Context())
 	topReviewers, _ := h.db.LeaderboardReviewers(5)
 	topSpeed, _ := h.db.LeaderboardReposBySpeed("ASC", 5)
 	totalRepos, totalPRs, totalReviews := h.db.TotalStats()

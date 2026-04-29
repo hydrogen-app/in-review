@@ -1,3 +1,11 @@
 .env
 data/
 *.db
+# jjd
+.jjd-sessions/
+.jjd-session
+.jjd-task-prompt
+.jjd.log
+frontend/node_modules/
+frontend/.next/
+frontend/out/
