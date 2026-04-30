@@ -916,13 +916,14 @@ func (h *Handler) NextLeaderboardSearch(w http.ResponseWriter, r *http.Request) 
 
 func (h *Handler) NextData(w http.ResponseWriter, r *http.Request) {
 	tab := chi.URLParam(r, "tab")
-	page, offset, search, sortBy, status, author, reviewer, state, repo := parseDataQuery(r)
+	page, offset, limit, search, sortBy, status, author, reviewer, state, repo := parseDataQuery(r)
 
 	data := DataExplorerData{
 		BaseData:   h.baseData(r),
 		ActiveTab:  tab,
 		Page:       page,
 		Offset:     offset,
+		Limit:      limit,
 		Search:     search,
 		SortBy:     sortBy,
 		Status:     status,
@@ -937,11 +938,14 @@ func (h *Handler) NextData(w http.ResponseWriter, r *http.Request) {
 
 	switch tab {
 	case "repos", "":
-		if status == "" {
+		if status == "all" {
+			status = ""
+			data.Status = "all"
+		} else if status == "" {
 			status = "done"
 			data.Status = status
 		}
-		repos, total, _ := h.db.ListReposFiltered(dataLimit, offset, sortBy, search, status)
+		repos, total, _ := h.db.ListReposFiltered(limit, offset, sortBy, search, status)
 		data.ActiveTab = "repos"
 		data.Repos = repos
 		data.ReposTotal = total
@@ -952,12 +956,15 @@ func (h *Handler) NextData(w http.ResponseWriter, r *http.Request) {
 		if sortBy != "" {
 			extra += "&sort=" + url.QueryEscape(sortBy)
 		}
-		if status != "" {
-			extra += "&status=" + url.QueryEscape(status)
+		if data.Status != "" {
+			extra += "&status=" + url.QueryEscape(data.Status)
 		}
-		setPagination(&data, "/data/repos", total, page, offset, extra)
+		if limit != dataDefaultLimit {
+			extra += "&limit=" + url.QueryEscape(strconv.Itoa(limit))
+		}
+		setPagination(&data, "/data/repos", total, page, offset, limit, extra)
 	case "prs":
-		prs, total, _ := h.db.ListPRsFiltered(dataLimit, offset, repo, author, sortBy)
+		prs, total, _ := h.db.ListPRsFiltered(limit, offset, repo, author, sortBy)
 		data.PRs = prs
 		data.PRsTotal = total
 		extra := ""
@@ -970,11 +977,15 @@ func (h *Handler) NextData(w http.ResponseWriter, r *http.Request) {
 		if repo != "" {
 			extra += "&repo=" + url.QueryEscape(repo)
 		}
-		setPagination(&data, "/data/prs", total, page, offset, extra)
+		if limit != dataDefaultLimit {
+			extra += "&limit=" + url.QueryEscape(strconv.Itoa(limit))
+		}
+		setPagination(&data, "/data/prs", total, page, offset, limit, extra)
 	case "reviews":
-		reviews, total, _ := h.db.ListReviewsFiltered(dataLimit, offset, reviewer, state)
+		reviews, total, _ := h.db.ListReviewsFiltered(limit, offset, reviewer, state, repo)
 		data.Reviews = reviews
 		data.ReviewsTotal = total
+		data.TotalIsApprox = total > offset+len(reviews)
 		extra := ""
 		if reviewer != "" {
 			extra += "&reviewer=" + url.QueryEscape(reviewer)
@@ -982,16 +993,25 @@ func (h *Handler) NextData(w http.ResponseWriter, r *http.Request) {
 		if state != "" {
 			extra += "&state=" + url.QueryEscape(state)
 		}
-		setPagination(&data, "/data/reviews", total, page, offset, extra)
+		if repo != "" {
+			extra += "&repo=" + url.QueryEscape(repo)
+		}
+		if limit != dataDefaultLimit {
+			extra += "&limit=" + url.QueryEscape(strconv.Itoa(limit))
+		}
+		setPagination(&data, "/data/reviews", total, page, offset, limit, extra)
 	case "users":
-		users, total, _ := h.db.ListUsersFiltered(dataLimit, offset, search)
+		users, total, _ := h.db.ListUsersFiltered(limit, offset, search)
 		data.Users = users
 		data.UsersTotal = total
 		extra := ""
 		if search != "" {
 			extra += "&search=" + url.QueryEscape(search)
 		}
-		setPagination(&data, "/data/users", total, page, offset, extra)
+		if limit != dataDefaultLimit {
+			extra += "&limit=" + url.QueryEscape(strconv.Itoa(limit))
+		}
+		setPagination(&data, "/data/users", total, page, offset, limit, extra)
 	default:
 		writeJSONError(w, http.StatusNotFound, "Data Tab Not Found", "\""+tab+"\" is not a valid data tab.")
 		return

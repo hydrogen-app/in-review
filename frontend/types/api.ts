@@ -314,10 +314,14 @@ export type DataExplorerData = BaseData & {
   ReviewsTotal: number;
   Users: User[];
   UsersTotal: number;
+  TotalIsApprox?: boolean;
   Page: number;
   Offset: number;
+  Limit: number;
   HasPrev: boolean;
   HasNext: boolean;
+  PrevURL?: string;
+  NextURL?: string;
   Search: string;
   SortBy: string;
   Status: string;

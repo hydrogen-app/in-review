@@ -2407,32 +2407,36 @@ func (d *DB) ListPRsFiltered(limit, offset int, repo, author, sortBy string) ([]
 }
 
 // ListReviewsFiltered returns a page of reviews and total count matching filters.
-func (d *DB) ListReviewsFiltered(limit, offset int, reviewer, state string) ([]Review, int, error) {
+func (d *DB) ListReviewsFiltered(limit, offset int, reviewer, state, repo string) ([]Review, int, error) {
+	queryLimit := limit + 1
 	rows, err := d.conn.Query(`
-		SELECT id, repo_full_name, pr_number, reviewer_login, state, submitted_at,
-		       COUNT(*) OVER() AS total
+		SELECT id, repo_full_name, pr_number, reviewer_login, state, submitted_at
 		FROM reviews
 		WHERE ($1 = '' OR reviewer_login LIKE $1 || '%')
 		  AND ($2 = '' OR state = $2)
+		  AND ($3 = '' OR repo_full_name LIKE $3 || '%')
 		ORDER BY submitted_at DESC
-		LIMIT $3 OFFSET $4
-	`, reviewer, state, limit, offset)
+		LIMIT $4 OFFSET $5
+	`, reviewer, state, repo, queryLimit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 	var revs []Review
-	var total int
 	for rows.Next() {
 		var rev Review
 		if err := rows.Scan(
 			&rev.ID, &rev.RepoFullName, &rev.PRNumber, &rev.ReviewerLogin, &rev.State, &rev.SubmittedAt,
-			&total,
 		); err != nil {
 			log.Printf("db: ListReviewsFiltered scan: %v", err)
 			continue
 		}
 		revs = append(revs, rev)
+	}
+	total := offset + len(revs)
+	if len(revs) > limit {
+		revs = revs[:limit]
+		total = offset + limit + 1
 	}
 	return revs, total, rows.Err()
 }
