@@ -184,9 +184,6 @@ func (d *DB) RepoRelationGraph(fullName string, limit int) (RelationGraph, error
 	if err := d.addRepoReviewerEdges(b, repo.FullName, perRoleLimit); err != nil {
 		return RelationGraph{}, err
 	}
-	if err := d.addRepoReviewPairEdges(b, repo.FullName, clampGraphLimit(limit)); err != nil {
-		return RelationGraph{}, err
-	}
 
 	return b.build(), nil
 }
@@ -299,12 +296,8 @@ func (d *DB) UserRelationGraph(login string, limit int) (RelationGraph, error) {
 
 	limit = clampGraphLimit(limit)
 	repoLimit := limit / 2
-	collabLimit := limit / 3
 	if repoLimit < 60 {
 		repoLimit = 60
-	}
-	if collabLimit < 50 {
-		collabLimit = 50
 	}
 
 	if err := d.addUserRepoEdges(b, login, "authored", repoLimit); err != nil {
@@ -313,10 +306,6 @@ func (d *DB) UserRelationGraph(login string, limit int) (RelationGraph, error) {
 	if err := d.addUserRepoEdges(b, login, "reviewed", repoLimit); err != nil {
 		return RelationGraph{}, err
 	}
-	if err := d.addUserCollaboratorEdges(b, login, collabLimit); err != nil {
-		return RelationGraph{}, err
-	}
-
 	return b.build(), nil
 }
 
@@ -423,10 +412,10 @@ func (d *DB) OrgRelationGraph(orgName string, limit int) (RelationGraph, error) 
 	if err := d.addOrgRepos(b, orgName, repoLimit); err != nil {
 		return RelationGraph{}, err
 	}
-	if err := d.addOrgRepoUserEdges(b, orgName, "reviewed", edgeLimit); err != nil {
+	if err := d.addOrgRepoUserEdges(b, orgName, "reviewed", repoLimit, edgeLimit); err != nil {
 		return RelationGraph{}, err
 	}
-	if err := d.addOrgRepoUserEdges(b, orgName, "authored", edgeLimit); err != nil {
+	if err := d.addOrgRepoUserEdges(b, orgName, "authored", repoLimit, edgeLimit); err != nil {
 		return RelationGraph{}, err
 	}
 
@@ -461,34 +450,45 @@ func (d *DB) addOrgRepos(b *relationGraphBuilder, orgName string, limit int) err
 	return rows.Err()
 }
 
-func (d *DB) addOrgRepoUserEdges(b *relationGraphBuilder, orgName, edgeType string, limit int) error {
+func (d *DB) addOrgRepoUserEdges(b *relationGraphBuilder, orgName, edgeType string, repoLimit, edgeLimit int) error {
 	var query string
 	switch edgeType {
 	case "reviewed":
 		query = `
 			SELECT rv.reviewer_login, rv.repo_full_name, COUNT(*) AS cnt
 			FROM reviews rv
-			JOIN repos repo ON repo.full_name=rv.repo_full_name
-			WHERE repo.org_name=$1
+			WHERE rv.repo_full_name IN (
+				SELECT full_name
+				FROM repos
+				WHERE org_name=$1
+				ORDER BY merged_pr_count DESC
+				LIMIT $2
+			)
 			GROUP BY rv.reviewer_login, rv.repo_full_name
 			ORDER BY cnt DESC
-			LIMIT $2
+			LIMIT $3
 		`
 	case "authored":
 		query = `
 			SELECT pr.author_login, pr.repo_full_name, COUNT(*) AS cnt
 			FROM pull_requests pr
-			JOIN repos repo ON repo.full_name=pr.repo_full_name
-			WHERE repo.org_name=$1 AND pr.merged=TRUE
+			WHERE pr.merged=TRUE
+			  AND pr.repo_full_name IN (
+				SELECT full_name
+				FROM repos
+				WHERE org_name=$1
+				ORDER BY merged_pr_count DESC
+				LIMIT $2
+			  )
 			GROUP BY pr.author_login, pr.repo_full_name
 			ORDER BY cnt DESC
-			LIMIT $2
+			LIMIT $3
 		`
 	default:
 		return nil
 	}
 
-	rows, err := d.conn.Query(query, orgName, limit)
+	rows, err := d.conn.Query(query, orgName, repoLimit, edgeLimit)
 	if err != nil {
 		return fmt.Errorf("org graph %s edges: %w", edgeType, err)
 	}

@@ -1,7 +1,13 @@
 import { cookies } from "next/headers";
 
 export function getApiBase(): string {
-  return process.env["API_BASE_URL"] || "http://localhost:8080";
+  if (process.env["API_BASE_URL"]) {
+    return process.env["API_BASE_URL"];
+  }
+  if (process.env["NODE_ENV"] === "production") {
+    return "http://in-review.railway.internal:8080";
+  }
+  return "http://localhost:8080";
 }
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {

@@ -24,19 +24,19 @@ type GraphArrays = {
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 const nodeColors: Record<RelationGraphNode["Type"], [number, number, number, number]> = {
-  user: [88, 166, 255, 0.95],
-  repo: [63, 185, 80, 0.95],
-  org: [210, 153, 34, 0.98]
+  user: [88, 166, 255, 1],
+  repo: [63, 185, 80, 1],
+  org: [245, 158, 11, 1]
 };
 
 const linkColors: Record<RelationGraphEdge["Type"], [number, number, number, number]> = {
-  authored: [63, 185, 80, 0.5],
-  reviewed: [88, 166, 255, 0.42],
-  "reviewed-pr": [248, 81, 73, 0.36],
-  owns: [210, 153, 34, 0.44]
+  authored: [63, 185, 80, 0.62],
+  reviewed: [88, 166, 255, 0.5],
+  "reviewed-pr": [248, 81, 73, 0.46],
+  owns: [245, 158, 11, 0.58]
 };
 
-export function RelationGraph({ src, title = "Relation Graph", limit = 420 }: RelationGraphProps) {
+export function RelationGraph({ src, title = "Relation Graph", limit = 260 }: RelationGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<Graph | null>(null);
   const [data, setData] = useState<RelationGraphData | null>(null);
@@ -105,28 +105,38 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 420 }: Re
       fitViewDuration: 500,
       fitViewOnInit: true,
       fitViewPadding: 0.18,
+      focusedPointRingColor: "#f0f6fc",
       hoveredPointCursor: "pointer",
       hoveredPointRingColor: "#e6edf3",
+      linkDefaultColor: "#6e7681",
       linkDefaultWidth: 0.4,
-      linkOpacity: data.Nodes.length > 700 ? 0.38 : 0.54,
+      linkOpacity: data.Nodes.length > 700 ? 0.48 : 0.68,
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      pointDefaultColor: "#58a6ff",
       pointDefaultSize: 4,
-      pointOpacity: 0.96,
+      pointOpacity: 1,
       randomSeed: data.CenterID,
       renderHoveredPointRing: true,
+      rescalePositions: false,
       scaleLinksOnZoom: false,
       scalePointsOnZoom: false,
-      simulationCenter: 0.18,
-      simulationDecay: data.Nodes.length > 700 ? 2200 : 3600,
-      simulationFriction: 0.88,
-      simulationGravity: 0.18,
-      simulationLinkDistance: 32,
-      simulationLinkSpring: 0.55,
-      simulationRepulsion: data.Nodes.length > 700 ? 0.55 : 0.85,
+      simulationCenter: 0.08,
+      simulationDecay: data.Nodes.length > 700 ? 10000 : 14000,
+      simulationFriction: 0.18,
+      simulationGravity: 0.08,
+      simulationLinkDistance: 46,
+      simulationLinkSpring: 0.34,
+      simulationRepulsion: data.Nodes.length > 700 ? 0.42 : 0.62,
       spaceSize: 8192,
       onBackgroundClick: () => {
         setSelected(null);
         graphRef.current?.setConfig({ focusedPointIndex: undefined });
+      },
+      onDragEnd: () => {
+        window.setTimeout(() => graphRef.current?.pause(), 180);
+      },
+      onDragStart: () => {
+        graphRef.current?.unpause();
       },
       onPointClick: (index) => {
         const node = data.Nodes[index];
@@ -149,9 +159,15 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 420 }: Re
     graph.setLinks(arrays.links);
     graph.setLinkColors(arrays.linkColors);
     graph.setLinkWidths(arrays.linkWidths);
-    graph.render();
+    graph.render(0.6);
+
+    const settleTimer = window.setTimeout(
+      () => graph.pause(),
+      data.Nodes.length > 700 ? 800 : 1200
+    );
 
     return () => {
+      window.clearTimeout(settleTimer);
       graph.destroy();
       if (graphRef.current === graph) {
         graphRef.current = null;
