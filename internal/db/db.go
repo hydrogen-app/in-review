@@ -177,7 +177,23 @@ func (d *DB) Close() error { return d.conn.Close() }
 
 // ── Schema ─────────────────────────────────────────────────────────────────────
 
+const migrationAdvisoryLockID int64 = 743928475610293841
+
 func (d *DB) migrate() error {
+	ctx := context.Background()
+	conn, err := d.conn.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLockID); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockID)
+	}()
+
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS repos (
 			full_name           TEXT PRIMARY KEY,
@@ -477,7 +493,7 @@ func (d *DB) migrate() error {
 		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='reviews_pkey' AND conrelid='reviews'::regclass AND contype='p') THEN ALTER TABLE reviews ADD PRIMARY KEY (db_id); END IF; END $$`,
 	}
 	for _, s := range stmts {
-		if _, err := d.conn.Exec(s); err != nil {
+		if _, err := conn.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
