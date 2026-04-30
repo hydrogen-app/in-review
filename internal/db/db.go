@@ -248,7 +248,6 @@ func (d *DB) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_repo     ON pull_requests(repo_full_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_author   ON pull_requests(author_login)`,
-		`CREATE INDEX IF NOT EXISTS idx_prs_merged   ON pull_requests(merged)`,
 		`CREATE INDEX IF NOT EXISTS idx_rev_reviewer ON reviews(reviewer_login)`,
 		`CREATE INDEX IF NOT EXISTS idx_rev_repo_pr  ON reviews(repo_full_name, pr_number)`,
 		`CREATE INDEX IF NOT EXISTS idx_repos_org    ON repos(org_name)`,
@@ -281,7 +280,6 @@ func (d *DB) migrate() error {
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS deletions INTEGER DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_at ON pull_requests(merged_at) WHERE merged=TRUE`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_merged_contrib ON pull_requests(merged, repo_full_name, author_login) WHERE merged=TRUE`,
-		`CREATE INDEX IF NOT EXISTS idx_rev_repo_pr_time ON reviews(repo_full_name, pr_number, submitted_at)`,
 		`ALTER TABLE pull_requests ADD COLUMN IF NOT EXISTS first_review_at TIMESTAMPTZ`,
 		`UPDATE pull_requests SET first_review_at = (
 			SELECT MIN(submitted_at) FROM reviews
@@ -312,8 +310,6 @@ func (d *DB) migrate() error {
 			installation_id BIGINT NOT NULL,
 			PRIMARY KEY (github_login, installation_id)
 		)`,
-		// Indexes for leaderboard GROUP BY queries.
-		`CREATE INDEX IF NOT EXISTS idx_rev_state ON reviews(state)`,
 		`CREATE INDEX IF NOT EXISTS idx_prs_author_merged ON pull_requests(author_login) WHERE merged=TRUE`,
 		// Retry tracking: stop re-queuing repos that have failed repeatedly.
 		`ALTER TABLE repos ADD COLUMN IF NOT EXISTS error_count INT NOT NULL DEFAULT 0`,
@@ -337,16 +333,20 @@ func (d *DB) migrate() error {
 		`ALTER TABLE repos SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		`ALTER TABLE pull_requests SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		`ALTER TABLE reviews SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
-		// Drop redundant indexes to reclaim ~2.6 GB of RAM.
-		// idx_rev_repo_pr_time (2254 MB): covered by idx_rev_repo_pr(repo_full_name, pr_number).
+		// Drop redundant indexes to reclaim disk and cache. Keep these as cleanup
+		// statements, but do not create them above on fresh databases.
+		// idx_rev_repo_pr_time: covered by idx_rev_repo_pr(repo_full_name, pr_number).
 		// submitted_at is never range-filtered alongside repo+pr_number.
 		`DROP INDEX IF EXISTS idx_rev_repo_pr_time`,
-		// idx_rev_state (205 MB): reviews(state) has 3 distinct values — too low-cardinality
+		// idx_rev_state: reviews(state) has 3 distinct values — too low-cardinality
 		// to be useful. All state-filtered queries use idx_rev_state_reviewer(state, reviewer_login).
 		`DROP INDEX IF EXISTS idx_rev_state`,
-		// idx_prs_merged (158 MB): pull_requests(merged) is a boolean. Every WHERE merged=TRUE
+		// idx_prs_merged: pull_requests(merged) is a boolean. Every WHERE merged=TRUE
 		// query also filters by author or repo, which partial indexes cover more efficiently.
 		`DROP INDEX IF EXISTS idx_prs_merged`,
+		// idx_reviews_dedup was attempted concurrently in older deployments and
+		// can remain invalid. UpsertReview uses a guarded INSERT instead.
+		`DROP INDEX IF EXISTS idx_reviews_dedup`,
 		// Materialized leaderboard tables. Rebuilt by RefreshLeaderboards() on a background
 		// timer so all leaderboard queries become simple indexed range scans instead of
 		// full GROUP BY aggregations on 25M+ rows.
@@ -422,20 +422,9 @@ func (d *DB) migrate() error {
 		//   CREATE SEQUENCE IF NOT EXISTS reviews_db_id_seq;
 		//   UPDATE pull_requests SET db_id = nextval('pull_requests_db_id_seq') WHERE db_id IS NULL;
 		//   UPDATE reviews SET db_id = nextval('reviews_db_id_seq') WHERE db_id IS NULL;
-		//   DELETE FROM reviews r USING (
-		//     SELECT db_id FROM (
-		//       SELECT db_id, ROW_NUMBER() OVER (
-		//         PARTITION BY repo_full_name, pr_number, reviewer_login, submitted_at
-		//         ORDER BY db_id
-		//       ) AS rn
-		//       FROM reviews
-		//     ) d WHERE rn > 1
-		//   ) dup WHERE r.db_id = dup.db_id;
-		//   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_reviews_dedup
-		//     ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at);
 		//
 		// After those finish, deploy — the steps below complete in milliseconds
-		// because the columns and index already exist.
+		// because the columns already exist.
 
 		// ── pull_requests ────────────────────────────────────────────────────────
 		// id is kept as a stored column; no unique index needed because UpsertPR
@@ -452,36 +441,14 @@ func (d *DB) migrate() error {
 		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='pull_requests_pkey' AND conrelid='pull_requests'::regclass AND contype='p') THEN ALTER TABLE pull_requests ADD PRIMARY KEY (db_id); END IF; END $$`,
 
 		// ── reviews ──────────────────────────────────────────────────────────────
-		// Deduplication moves from ON CONFLICT(id) to the composite unique index
-		// idx_reviews_dedup(repo_full_name, pr_number, reviewer_login, submitted_at).
-		// id is retained as a stored column for audit purposes.
+		// id is retained as a stored column for audit purposes. Logical duplicate
+		// reviews are skipped by UpsertReview without a large composite unique index.
 		`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS db_id BIGINT`,
 		`CREATE SEQUENCE IF NOT EXISTS reviews_db_id_seq`,
 		`UPDATE reviews SET db_id = nextval('reviews_db_id_seq') WHERE db_id IS NULL`,
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET DEFAULT nextval('reviews_db_id_seq'); EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`DO $$ BEGIN ALTER TABLE reviews ALTER COLUMN db_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$`,
 		`SELECT setval('reviews_db_id_seq', COALESCE((SELECT MAX(db_id) FROM reviews), 1))`,
-		// Older versions used GitHub's review ID as the primary key, but retries
-		// and pagination edge cases could still leave duplicate logical reviews in
-		// local/dev databases. Keep the oldest row so the unique dedupe index can
-		// be created idempotently.
-		`DELETE FROM reviews r USING (
-			SELECT db_id FROM (
-				SELECT db_id,
-				       ROW_NUMBER() OVER (
-				           PARTITION BY repo_full_name, pr_number, reviewer_login, submitted_at
-				           ORDER BY db_id
-				       ) AS rn
-				FROM reviews
-			) d
-			WHERE rn > 1
-		) dup
-		WHERE r.db_id = dup.db_id`,
-		// NOT CONCURRENTLY — CONCURRENTLY cannot run inside a transaction and
-		// sql.DB.Exec uses implicit transactions, which caused this to silently
-		// fail and left UpsertReview broken (no unique constraint to match ON CONFLICT).
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_dedup ON reviews(repo_full_name, pr_number, reviewer_login, submitted_at)`,
-
 		// Small B-tree prefix indexes for Data Explorer searches.
 		// text_pattern_ops allows LIKE 'foo%' (prefix) queries without locale constraints.
 		`CREATE INDEX IF NOT EXISTS idx_prs_author_prefix ON pull_requests(author_login text_pattern_ops)`,
@@ -561,8 +528,15 @@ func (d *DB) UpsertPR(pr PullRequest) error {
 func (d *DB) UpsertReview(r Review) error {
 	_, err := d.conn.Exec(`
 		INSERT INTO reviews (id, repo_full_name, pr_number, reviewer_login, state, submitted_at)
-		VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT(repo_full_name, pr_number, reviewer_login, submitted_at) DO NOTHING
+		SELECT $1,$2,$3,$4,$5,$6
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM reviews
+			WHERE repo_full_name=$2
+			  AND pr_number=$3
+			  AND reviewer_login=$4
+			  AND submitted_at=$6
+		)
 	`, r.ID, r.RepoFullName, r.PRNumber, r.ReviewerLogin, r.State, r.SubmittedAt.UTC())
 	return err
 }
