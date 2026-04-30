@@ -336,6 +336,7 @@ func (d *DB) migrate() error {
 		// default 20% threshold triggers cleanup.
 		`ALTER TABLE repos SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		`ALTER TABLE pull_requests SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
+		`ALTER TABLE reviews SET (autovacuum_vacuum_scale_factor = 0.01, autovacuum_analyze_scale_factor = 0.005)`,
 		// Drop redundant indexes to reclaim ~2.6 GB of RAM.
 		// idx_rev_repo_pr_time (2254 MB): covered by idx_rev_repo_pr(repo_full_name, pr_number).
 		// submitted_at is never range-filtered alongside repo+pr_number.
@@ -694,7 +695,7 @@ func (d *DB) RefreshLeaderboards() error {
 		 GROUP BY repo_full_name`,
 
 		// ── Reviewers ──────────────────────────────────────────────────────────
-		`DELETE FROM mat_leaderboard_reviewers`,
+		`TRUNCATE mat_leaderboard_reviewers`,
 		`INSERT INTO mat_leaderboard_reviewers
 			  (rank, login, avatar_url, total_reviews, approvals, changes_requested)
 		 WITH top AS (
@@ -714,7 +715,7 @@ func (d *DB) RefreshLeaderboards() error {
 		 FROM top`,
 
 		// ── Gatekeepers ────────────────────────────────────────────────────────
-		`DELETE FROM mat_leaderboard_gatekeepers`,
+		`TRUNCATE mat_leaderboard_gatekeepers`,
 		`INSERT INTO mat_leaderboard_gatekeepers
 			  (rank, login, avatar_url, total, approvals, changes_requested)
 		 WITH top AS (
@@ -735,7 +736,7 @@ func (d *DB) RefreshLeaderboards() error {
 		 FROM top`,
 
 		// ── Authors ────────────────────────────────────────────────────────────
-		`DELETE FROM mat_leaderboard_authors`,
+		`TRUNCATE mat_leaderboard_authors`,
 		`INSERT INTO mat_leaderboard_authors
 			  (rank, login, avatar_url, merged_prs, avg_merge_time_secs)
 		 WITH top AS (
@@ -755,7 +756,7 @@ func (d *DB) RefreshLeaderboards() error {
 		 FROM top`,
 
 		// ── Clean approvals ────────────────────────────────────────────────────
-		`DELETE FROM mat_leaderboard_clean`,
+		`TRUNCATE mat_leaderboard_clean`,
 		`INSERT INTO mat_leaderboard_clean
 			  (rank, repo_full_name, total_prs, clean_pct, avg_secs)
 		 WITH top AS (
