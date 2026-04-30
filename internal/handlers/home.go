@@ -3,9 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
@@ -160,61 +158,4 @@ func (h *Handler) WarmHomeCache() {
 			log.Printf("home: refresh error: %v", err)
 		}
 	}
-}
-
-func (h *Handler) Home(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	var lb homeLBCache
-	if raw, ok := h.cache.Get(ctx, homeLBCacheKey); ok {
-		_ = json.Unmarshal(raw, &lb)
-	} else {
-		// Cache miss — build synchronously (singleflight prevents stampede).
-		lb, _ = h.buildHomeCache(ctx)
-	}
-
-	data := HomeData{
-		TotalRepos:    lb.TotalRepos,
-		TotalPRs:      lb.TotalPRs,
-		TotalReviews:  lb.TotalReviews,
-		SpeedDemons:   lb.SpeedDemons,
-		PRGraveyard:   lb.PRGraveyard,
-		ReviewChamps:  lb.ReviewChamps,
-		Gatekeepers:   lb.Gatekeepers,
-		MergeMasters:  lb.MergeMasters,
-		OneShot:       lb.OneShot,
-		PopularVisits: lb.PopularVisits,
-		RecentVisits:  lb.RecentVisits,
-	}
-	data.OGDesc = fmt.Sprintf("%d PRs analyzed across %d repos. Global leaderboards for GitHub PR review time. If you aren't reviewing, you're ngmi.", data.TotalPRs, data.TotalRepos)
-	data.BaseData = h.baseData(r)
-	h.render(w, "home", data)
-}
-
-// LeaderboardAPI returns a leaderboard partial for HTMX category updates.
-func (h *Handler) LeaderboardAPI(w http.ResponseWriter, r *http.Request) {
-	category := r.URL.Query().Get("cat")
-
-	type LeaderboardData struct {
-		Category string
-		Entries  []db.LeaderboardEntry
-	}
-
-	data := LeaderboardData{Category: category}
-
-	switch category {
-	case "speed":
-		data.Entries, _ = h.db.LeaderboardReposBySpeed("ASC", 10)
-	case "graveyard":
-		data.Entries, _ = h.db.LeaderboardReposBySpeed("DESC", 10)
-	case "reviewers":
-		data.Entries, _ = h.db.LeaderboardReviewers(10)
-	case "gatekeepers":
-		data.Entries, _ = h.db.LeaderboardGatekeepers(10)
-	case "authors":
-		data.Entries, _ = h.db.LeaderboardAuthors(10)
-	case "oneshot":
-		data.Entries, _ = h.db.LeaderboardCleanApprovals(10)
-	}
-
-	h.renderPartial(w, "leaderboard", data)
 }

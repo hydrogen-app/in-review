@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strconv"
 
@@ -12,12 +11,12 @@ import (
 	"inreview/internal/rdb"
 )
 
-// StatsData is passed to the stats page template.
+// StatsData is returned by the stats JSON endpoint.
 type StatsData struct {
 	BaseData
 	Overall       db.GlobalOverallStats
-	SizeChartJSON template.JS
-	TimeChartJSON template.JS
+	SizeChartJSON string
+	TimeChartJSON string
 	Trim          int
 	MinStars      int
 	MinContribs   int
@@ -98,7 +97,7 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 			payload.AvgChangesRequested = append(payload.AvgChangesRequested, roundTo1(b.AvgChangesRequested))
 		}
 		if raw, err := json.Marshal(payload); err == nil {
-			data.SizeChartJSON = template.JS(raw)
+			data.SizeChartJSON = string(raw)
 		}
 	}
 
@@ -131,7 +130,7 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 			tp.MergeVsOpenRate = append(tp.MergeVsOpenRate, rate)
 		}
 		if raw, err := json.Marshal(tp); err == nil {
-			data.TimeChartJSON = template.JS(raw)
+			data.TimeChartJSON = string(raw)
 		}
 	}
 
@@ -141,32 +140,4 @@ func (h *Handler) buildStatsCache(ctx context.Context, trim, minStars, minContri
 		}
 	}
 	return data
-}
-
-func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
-	trim, _ := parseTrim(r)
-	minStars, _ := strconv.Atoi(r.URL.Query().Get("min_stars"))
-	if minStars < 0 {
-		minStars = 0
-	}
-	minContribs, _ := strconv.Atoi(r.URL.Query().Get("min_contribs"))
-	if minContribs < 0 {
-		minContribs = 0
-	}
-
-	cacheKey := fmt.Sprintf("stats:v4:%d:%d:%d", trim, minStars, minContribs)
-	if h.cache != nil {
-		if raw, ok := h.cache.Get(r.Context(), cacheKey); ok {
-			var data StatsData
-			if json.Unmarshal(raw, &data) == nil {
-				data.BaseData = h.baseData(r)
-				h.render(w, "stats", data)
-				return
-			}
-		}
-	}
-
-	data := h.buildStatsCache(r.Context(), trim, minStars, minContribs)
-	data.BaseData = h.baseData(r)
-	h.render(w, "stats", data)
 }

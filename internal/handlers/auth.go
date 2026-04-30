@@ -18,6 +18,10 @@ func userFromLogin(login, avatarURL string) db.User {
 	return db.User{Login: login, AvatarURL: avatarURL}
 }
 
+func writeAuthError(w http.ResponseWriter, status int, title, message string) {
+	http.Error(w, title+": "+message, status)
+}
+
 // jsonDecode decodes the request body as JSON into v.
 func jsonDecode(r *http.Request, v interface{}) error {
 	defer r.Body.Close()
@@ -33,8 +37,7 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.cfg.GitHubOAuthClientID == "" {
-		h.renderErrorReq(w, r, http.StatusServiceUnavailable,
-			"Auth Unavailable", "GitHub OAuth is not configured.")
+		writeAuthError(w, http.StatusServiceUnavailable, "Auth Unavailable", "GitHub OAuth is not configured.")
 		return
 	}
 	state := auth.GenerateOAuthState(r.Context(), h.cache)
@@ -50,8 +53,7 @@ func (h *Handler) AuthLogin(w http.ResponseWriter, r *http.Request) {
 // Used by the "Install GitHub App" button on the dashboard (after login).
 func (h *Handler) AuthGitHub(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.GitHubAppSlug == "" {
-		h.renderErrorReq(w, r, http.StatusServiceUnavailable,
-			"Auth Unavailable", "GitHub App is not configured (GITHUB_APP_SLUG missing).")
+		writeAuthError(w, http.StatusServiceUnavailable, "Auth Unavailable", "GitHub App is not configured (GITHUB_APP_SLUG missing).")
 		return
 	}
 	state := auth.GenerateOAuthState(r.Context(), h.cache)
@@ -76,8 +78,7 @@ func (h *Handler) AuthGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	// Validate CSRF state when present (always present for installation flow).
 	if state != "" {
 		if !auth.ValidateOAuthState(r.Context(), h.cache, state) {
-			h.renderErrorReq(w, r, http.StatusBadRequest, "Auth Error",
-				"Invalid or expired OAuth state. Please try connecting again.")
+			writeAuthError(w, http.StatusBadRequest, "Auth Error", "Invalid or expired OAuth state. Please try connecting again.")
 			return
 		}
 	}
@@ -94,15 +95,13 @@ func (h *Handler) AuthGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		)
 		if err != nil {
 			log.Printf("auth: exchange OAuth code: %v", err)
-			h.renderErrorReq(w, r, http.StatusInternalServerError, "Auth Error",
-				"Could not exchange OAuth code with GitHub.")
+			writeAuthError(w, http.StatusInternalServerError, "Auth Error", "Could not exchange OAuth code with GitHub.")
 			return
 		}
 		login, avatarURL, err = auth.FetchGitHubLogin(token)
 		if err != nil {
 			log.Printf("auth: fetch GitHub login: %v", err)
-			h.renderErrorReq(w, r, http.StatusInternalServerError, "Auth Error",
-				"Could not retrieve your GitHub profile.")
+			writeAuthError(w, http.StatusInternalServerError, "Auth Error", "Could not retrieve your GitHub profile.")
 			return
 		}
 	}
@@ -113,8 +112,7 @@ func (h *Handler) AuthGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if login == "" {
-		h.renderErrorReq(w, r, http.StatusBadRequest, "Auth Error",
-			"Could not identify your GitHub account. Please try again.")
+		writeAuthError(w, http.StatusBadRequest, "Auth Error", "Could not identify your GitHub account. Please try again.")
 		return
 	}
 
@@ -139,8 +137,7 @@ func (h *Handler) AuthGitHubCallback(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	if err := h.db.CreateSession(sessionID, login, installID, expiresAt); err != nil {
 		log.Printf("auth: create session: %v", err)
-		h.renderErrorReq(w, r, http.StatusInternalServerError, "Auth Error",
-			"Could not create session.")
+		writeAuthError(w, http.StatusInternalServerError, "Auth Error", "Could not create session.")
 		return
 	}
 

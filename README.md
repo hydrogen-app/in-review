@@ -15,7 +15,7 @@ Live at [inreview.dev](https://inreview.dev).
 
 ### Services
 
-1. **Go API app** — this repo with `Dockerfile.web`. It still serves the legacy HTML routes and now exposes `/api/next/*` JSON for the Next app.
+1. **Go API app** — this repo with `Dockerfile.web`. It is backend-only and exposes `/api/next/*` JSON plus auth, badge, webhook, and sync endpoints for the Next app.
 2. **Next.js frontend** — this repo with `Dockerfile.frontend`. Set `API_BASE_URL` to the public/internal URL of the Go API service.
 3. **Sync worker** — this repo with `Dockerfile.sync`. This is the only service that should run GitHub sync workers.
 4. **PostgreSQL** — add a Postgres plugin from the Railway dashboard. The `DATABASE_URL` env var is injected automatically.

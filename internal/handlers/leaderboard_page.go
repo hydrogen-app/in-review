@@ -4,11 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strconv"
-	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"inreview/internal/db"
 	"inreview/internal/rdb"
 )
@@ -39,47 +35,6 @@ var leaderboardMeta = map[string][2]string{
 	"oneshot":     {"One-Shot Heroes", "Repos where PRs get approved on the first try"},
 }
 
-func (h *Handler) LeaderboardPage(w http.ResponseWriter, r *http.Request) {
-	category := chi.URLParam(r, "category")
-	meta, ok := leaderboardMeta[category]
-	if !ok {
-		h.renderError(w, http.StatusNotFound, "Leaderboard Not Found",
-			"\""+category+"\" is not a valid leaderboard category.")
-		return
-	}
-
-	data := LeaderboardPageData{
-		Category:    category,
-		Title:       meta[0],
-		Description: meta[1],
-		OGTitle:     meta[0] + " — ngmi",
-		OGDesc:      meta[1] + ". Global PR review leaderboards at ngmi.review.",
-		OGUrl:       "https://ngmi.review/leaderboard/" + category,
-	}
-
-	h.populateLeaderboardData(&data, category, 0)
-	data.BaseData = h.baseData(r)
-	h.render(w, "leaderboard_page", data)
-}
-
-// LeaderboardRows returns additional table rows for infinite scroll (HTMX partial).
-func (h *Handler) LeaderboardRows(w http.ResponseWriter, r *http.Request) {
-	category := chi.URLParam(r, "category")
-	if _, ok := leaderboardMeta[category]; !ok {
-		http.NotFound(w, r)
-		return
-	}
-
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
-
-	data := LeaderboardPageData{Category: category}
-	h.populateLeaderboardData(&data, category, offset)
-	h.renderPartial(w, "leaderboard_rows", data)
-}
-
 // LeaderboardSearchData is the result returned to the search partial.
 type LeaderboardSearchData struct {
 	Category string
@@ -108,31 +63,6 @@ type LeaderboardSearchData struct {
 	PRCount       int
 	SpeedRank     int
 	GraveyardRank int
-}
-
-// LeaderboardSearch handles HTMX search requests from the leaderboard table page.
-func (h *Handler) LeaderboardSearch(w http.ResponseWriter, r *http.Request) {
-	category := chi.URLParam(r, "category")
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-
-	result := LeaderboardSearchData{Category: category, Query: q}
-
-	if q == "" {
-		result.Empty = true
-		h.renderPartial(w, "leaderboard_search", result)
-		return
-	}
-
-	isUserCategory := category == "reviewers" || category == "gatekeepers" || category == "authors"
-
-	if isUserCategory {
-		login := strings.TrimPrefix(q, "@")
-		h.leaderboardUserSearch(&result, category, login)
-	} else {
-		h.leaderboardRepoSearch(&result, category, q)
-	}
-
-	h.renderPartial(w, "leaderboard_search", result)
 }
 
 func (h *Handler) leaderboardUserSearch(result *LeaderboardSearchData, category, login string) {
@@ -221,10 +151,10 @@ func (h *Handler) leaderboardRepoSearch(result *LeaderboardSearchData, category,
 
 // cachedLeaderboardRows is the cacheable subset of LeaderboardPageData.
 type cachedLeaderboardRows struct {
-	RepoRows  []db.RepoLeaderboardRow
-	UserRows  []db.UserLeaderboardRow
-	CleanRows []db.CleanLeaderboardRow
-	HasMore   bool
+	RepoRows   []db.RepoLeaderboardRow
+	UserRows   []db.UserLeaderboardRow
+	CleanRows  []db.CleanLeaderboardRow
+	HasMore    bool
 	NextOffset int
 }
 
@@ -314,4 +244,3 @@ func (h *Handler) populateLeaderboardData(data *LeaderboardPageData, category st
 	data.HasMore = cached.HasMore
 	data.NextOffset = cached.NextOffset
 }
-

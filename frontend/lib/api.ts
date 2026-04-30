@@ -1,10 +1,12 @@
 import { cookies } from "next/headers";
 
-export const apiBase = process.env.API_BASE_URL || "http://localhost:8080";
+export function getApiBase(): string {
+  return process.env["API_BASE_URL"] || "http://localhost:8080";
+}
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const cookieHeader = (await cookies()).toString();
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetch(`${getApiBase()}${path}`, {
     cache: "no-store",
     ...init,
     headers: {

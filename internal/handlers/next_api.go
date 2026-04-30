@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,7 +19,6 @@ import (
 )
 
 // RegisterNextRoutes exposes JSON endpoints consumed by the Next.js frontend.
-// The existing HTML/HTMX routes stay in place while the frontend moves over.
 func (h *Handler) RegisterNextRoutes(r chi.Router) {
 	r.Get("/api/next/session", h.NextSession)
 	r.Get("/api/next/home", h.NextHome)
@@ -391,7 +389,7 @@ func (h *Handler) NextRepoCharts(w http.ResponseWriter, r *http.Request) {
 			payload.ApprovalRate = append(payload.ApprovalRate, roundTo1(b.ApprovalRate))
 		}
 		if raw, err := json.Marshal(payload); err == nil {
-			cd.SizeChartJSON = template.JS(raw)
+			cd.SizeChartJSON = string(raw)
 		}
 	}
 
@@ -411,13 +409,13 @@ func (h *Handler) NextRepoCharts(w http.ResponseWriter, r *http.Request) {
 			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
 		if raw, err := json.Marshal(tp); err == nil {
-			cd.TimeChartJSON = template.JS(raw)
+			cd.TimeChartJSON = string(raw)
 		}
 	}
 
 	cc := repoChartsCache{
-		SizeChartJSON: string(cd.SizeChartJSON),
-		TimeChartJSON: string(cd.TimeChartJSON),
+		SizeChartJSON: cd.SizeChartJSON,
+		TimeChartJSON: cd.TimeChartJSON,
 	}
 	if h.cache != nil {
 		if raw, err := json.Marshal(cc); err == nil {
@@ -674,7 +672,7 @@ func (h *Handler) NextUserCharts(w http.ResponseWriter, r *http.Request) {
 			ap.CRRate = append(ap.CRRate, roundTo1(p.ChangesRequestedRate))
 		}
 		if raw, err := json.Marshal(ap); err == nil {
-			cd.ActivityJSON = template.JS(raw)
+			cd.ActivityJSON = string(raw)
 		}
 	}
 	if len(sizeDist) > 0 {
@@ -684,13 +682,13 @@ func (h *Handler) NextUserCharts(w http.ResponseWriter, r *http.Request) {
 			sp.PRCounts = append(sp.PRCounts, b.PRCount)
 		}
 		if raw, err := json.Marshal(sp); err == nil {
-			cd.SizeBucketJSON = template.JS(raw)
+			cd.SizeBucketJSON = string(raw)
 		}
 	}
 
 	cc := userChartsCache{
-		ActivityJSON:   string(cd.ActivityJSON),
-		SizeBucketJSON: string(cd.SizeBucketJSON),
+		ActivityJSON:   cd.ActivityJSON,
+		SizeBucketJSON: cd.SizeBucketJSON,
 	}
 	if h.cache != nil {
 		if raw, err := json.Marshal(cc); err == nil {
@@ -799,7 +797,7 @@ func (h *Handler) NextOrg(w http.ResponseWriter, r *http.Request) {
 			tp.LinesPerContrib = append(tp.LinesPerContrib, roundTo1(p.LinesPerContrib))
 		}
 		if raw, err := json.Marshal(tp); err == nil {
-			data.TimeChartJSON = template.JS(raw)
+			data.TimeChartJSON = string(raw)
 		}
 	}
 
