@@ -5,6 +5,7 @@ import { RelationGraph } from "@/components/RelationGraph";
 import { UserCharts } from "@/components/UserCharts";
 import { apiGet } from "@/lib/api";
 import { formatDuration, formatNumber, percent, timeAgo, timeChipClass } from "@/lib/format";
+import { userGraphPreview } from "@/lib/graph-preview";
 import type { UserData } from "@/types/api";
 
 type Props = {
@@ -88,7 +89,7 @@ export default async function UserPage({ params }: Props) {
         </div>
       ) : null}
 
-      <RelationGraph src={`/api/next/graph/user/${encodeURIComponent(user.Login)}`} />
+      <RelationGraph src={`/api/next/graph/user/${encodeURIComponent(user.Login)}`} initialData={userGraphPreview(data)} />
 
       <div className="two-col">
         <div className="col-card">

@@ -5,6 +5,7 @@ import { RepoCharts } from "@/components/RepoCharts";
 import { SyncButton } from "@/components/SyncButton";
 import { apiGet, qs } from "@/lib/api";
 import { formatDuration, formatNumber, percent, rankBadge, rankClass, timeAgo, timeChipClass } from "@/lib/format";
+import { repoGraphPreview } from "@/lib/graph-preview";
 import type { RepoData } from "@/types/api";
 
 type Props = {
@@ -65,7 +66,7 @@ export default async function RepoPage({ params, searchParams }: Props) {
 
       {repo.MergedPRCount ? <RepoCharts owner={repo.Owner} name={repo.Name} trim={trim} /> : null}
 
-      <RelationGraph src={`/api/next/graph/repo/${encodeURIComponent(repo.Owner)}/${encodeURIComponent(repo.Name)}`} />
+      <RelationGraph src={`/api/next/graph/repo/${encodeURIComponent(repo.Owner)}/${encodeURIComponent(repo.Name)}`} initialData={repoGraphPreview(data)} />
 
       {data.TopReviewers?.length ? (
         <section className="section">

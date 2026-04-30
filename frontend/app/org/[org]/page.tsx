@@ -5,6 +5,7 @@ import { TimeCharts, type TimePayload } from "@/components/Charts";
 import { RelationGraph } from "@/components/RelationGraph";
 import { apiGet, qs } from "@/lib/api";
 import { formatDuration, formatNumber, jsonPayload, rankBadge, rankClass } from "@/lib/format";
+import { orgGraphPreview } from "@/lib/graph-preview";
 import type { OrgData } from "@/types/api";
 
 type Props = {
@@ -44,7 +45,7 @@ export default async function OrgPage({ params, searchParams }: Props) {
 
       <TimeCharts payload={time} />
 
-      <RelationGraph src={`/api/next/graph/org/${encodeURIComponent(data.Org.Login)}`} />
+      <RelationGraph src={`/api/next/graph/org/${encodeURIComponent(data.Org.Login)}`} initialData={orgGraphPreview(data)} />
 
       <div className="two-col">
         <OrgBoard title="In-Org Review Champions" entries={data.ReviewerBoard} suffix="reviews" />

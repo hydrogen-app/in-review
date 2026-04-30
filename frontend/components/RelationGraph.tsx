@@ -10,6 +10,7 @@ type RelationGraphProps = {
   src: string;
   title?: string;
   limit?: number;
+  initialData?: RelationGraphData;
 };
 
 type GraphArrays = {
@@ -36,20 +37,83 @@ const linkColors: Record<RelationGraphEdge["Type"], [number, number, number, num
   owns: [245, 158, 11, 0.58]
 };
 
-export function RelationGraph({ src, title = "Relation Graph", limit = 260 }: RelationGraphProps) {
+type IdleWindow = Window & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  cancelIdleCallback?: (id: number) => void;
+};
+
+export function RelationGraph({ src, title = "Relation Graph", limit = 260, initialData }: RelationGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<Graph | null>(null);
-  const [data, setData] = useState<RelationGraphData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<RelationGraphData | null>(initialData || null);
+  const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState("");
   const [hovered, setHovered] = useState<RelationGraphNode | null>(null);
   const [selected, setSelected] = useState<RelationGraphNode | null>(null);
+  const [shouldFetch, setShouldFetch] = useState(false);
 
   useEffect(() => {
+    setData(initialData || null);
+    setLoading(!initialData);
+    setError("");
+    setSelected(null);
+    setHovered(null);
+    setShouldFetch(false);
+  }, [initialData, limit, src]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let cancelled = false;
+    let timer: number | undefined;
+    let idleID: number | undefined;
+    const idleWindow = window as IdleWindow;
+
+    const scheduleFetch = () => {
+      if (cancelled) return;
+      if (idleWindow.requestIdleCallback) {
+        idleID = idleWindow.requestIdleCallback(() => !cancelled && setShouldFetch(true), { timeout: 1800 });
+      } else {
+        timer = window.setTimeout(() => !cancelled && setShouldFetch(true), 700);
+      }
+    };
+
+    if (!("IntersectionObserver" in window)) {
+      scheduleFetch();
+      return () => {
+        cancelled = true;
+        if (timer) window.clearTimeout(timer);
+        if (idleID !== undefined) idleWindow.cancelIdleCallback?.(idleID);
+      };
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          scheduleFetch();
+        }
+      },
+      { rootMargin: "360px" }
+    );
+    observer.observe(container);
+
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+      if (timer) window.clearTimeout(timer);
+      if (idleID !== undefined) idleWindow.cancelIdleCallback?.(idleID);
+    };
+  }, [limit, src]);
+
+  useEffect(() => {
+    if (!shouldFetch) return;
+
     const controller = new AbortController();
     const url = withLimit(src, limit);
 
-    setLoading(true);
+    setLoading(!initialData);
     setError("");
 
     fetch(url, {
@@ -71,7 +135,7 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 260 }: Re
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
           setError(err.message);
-          setData(null);
+          setData((current) => current);
         }
       })
       .finally(() => {
@@ -81,7 +145,7 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 260 }: Re
       });
 
     return () => controller.abort();
-  }, [limit, src]);
+  }, [initialData, limit, shouldFetch, src]);
 
   const arrays = useMemo(() => (data ? buildGraphArrays(data) : null), [data]);
   const activeNode = selected || hovered;
