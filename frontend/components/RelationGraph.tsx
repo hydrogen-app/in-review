@@ -25,16 +25,16 @@ type GraphArrays = {
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 const nodeColors: Record<RelationGraphNode["Type"], [number, number, number, number]> = {
-  user: [88, 166, 255, 1],
-  repo: [63, 185, 80, 1],
-  org: [245, 158, 11, 1]
+  user: rgba(88, 166, 255, 1),
+  repo: rgba(63, 185, 80, 1),
+  org: rgba(245, 158, 11, 1)
 };
 
 const linkColors: Record<RelationGraphEdge["Type"], [number, number, number, number]> = {
-  authored: [63, 185, 80, 0.62],
-  reviewed: [88, 166, 255, 0.5],
-  "reviewed-pr": [248, 81, 73, 0.46],
-  owns: [245, 158, 11, 0.58]
+  authored: rgba(63, 185, 80, 0.62),
+  reviewed: rgba(88, 166, 255, 0.5),
+  "reviewed-pr": rgba(248, 81, 73, 0.46),
+  owns: rgba(245, 158, 11, 0.58)
 };
 
 type IdleWindow = Window & {
@@ -165,6 +165,7 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 260, init
       curvedLinkSegments: 8,
       enableDrag: true,
       enableRightClickRepulsion: false,
+      enableSimulation: false,
       fitViewDelay: 450,
       fitViewDuration: 500,
       fitViewOnInit: true,
@@ -184,23 +185,10 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 260, init
       rescalePositions: false,
       scaleLinksOnZoom: false,
       scalePointsOnZoom: false,
-      simulationCenter: 0.08,
-      simulationDecay: data.Nodes.length > 700 ? 10000 : 14000,
-      simulationFriction: 0.18,
-      simulationGravity: 0.08,
-      simulationLinkDistance: 46,
-      simulationLinkSpring: 0.34,
-      simulationRepulsion: data.Nodes.length > 700 ? 0.42 : 0.62,
       spaceSize: 8192,
       onBackgroundClick: () => {
         setSelected(null);
         graphRef.current?.setConfig({ focusedPointIndex: undefined });
-      },
-      onDragEnd: () => {
-        window.setTimeout(() => graphRef.current?.pause(), 180);
-      },
-      onDragStart: () => {
-        graphRef.current?.unpause();
       },
       onPointClick: (index) => {
         const node = data.Nodes[index];
@@ -223,15 +211,9 @@ export function RelationGraph({ src, title = "Relation Graph", limit = 260, init
     graph.setLinks(arrays.links);
     graph.setLinkColors(arrays.linkColors);
     graph.setLinkWidths(arrays.linkWidths);
-    graph.render(0.6);
-
-    const settleTimer = window.setTimeout(
-      () => graph.pause(),
-      data.Nodes.length > 700 ? 800 : 1200
-    );
+    graph.render(0);
 
     return () => {
-      window.clearTimeout(settleTimer);
       graph.destroy();
       if (graphRef.current === graph) {
         graphRef.current = null;
@@ -344,6 +326,10 @@ function initialPosition(node: RelationGraphNode, index: number): [number, numbe
   const angle = typeOffset + index * GOLDEN_ANGLE + (hashString(node.ID) % 360) * (Math.PI / 720);
   const radius = baseRadius + Math.sqrt(index + 1) * spread;
   return [Math.cos(angle) * radius, Math.sin(angle) * radius];
+}
+
+function rgba(red: number, green: number, blue: number, alpha: number): [number, number, number, number] {
+  return [red / 255, green / 255, blue / 255, alpha];
 }
 
 function nodeSize(node: RelationGraphNode): number {
