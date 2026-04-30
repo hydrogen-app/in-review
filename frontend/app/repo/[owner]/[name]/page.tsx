@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { RelationGraph } from "@/components/RelationGraph";
 import { RepoCharts } from "@/components/RepoCharts";
 import { SyncButton } from "@/components/SyncButton";
 import { apiGet, qs } from "@/lib/api";
@@ -63,6 +64,8 @@ export default async function RepoPage({ params, searchParams }: Props) {
       </div>
 
       {repo.MergedPRCount ? <RepoCharts owner={repo.Owner} name={repo.Name} trim={trim} /> : null}
+
+      <RelationGraph src={`/api/next/graph/repo/${encodeURIComponent(repo.Owner)}/${encodeURIComponent(repo.Name)}`} />
 
       {data.TopReviewers?.length ? (
         <section className="section">

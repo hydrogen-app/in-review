@@ -695,6 +695,105 @@ p  { margin: 0 0 0.5rem; }
 .blog-prose       { color: var(--muted); font-size: 0.9rem; line-height: 1.75; margin-bottom: 0.75rem; }
 .blog-prose a     { color: var(--link); }
 
+/* ── Relation graph ───────────────────────────────────────────── */
+.relation-graph-section { margin-top: 1.5rem; }
+.relation-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.relation-graph-head .section-title { margin: 0; }
+.relation-graph-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.relation-graph-count {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.relation-graph-frame {
+  position: relative;
+  border: 1px solid var(--border);
+  background: #16181d;
+  min-height: 460px;
+  overflow: hidden;
+}
+.relation-graph-canvas {
+  width: 100%;
+  height: 460px;
+}
+.relation-graph-canvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+.relation-graph-panel,
+.relation-graph-legend {
+  position: absolute;
+  left: 0.75rem;
+  z-index: 2;
+  max-width: min(360px, calc(100% - 1.5rem));
+  border: 1px solid rgba(132, 141, 151, 0.28);
+  background: rgba(22, 24, 29, 0.88);
+  backdrop-filter: blur(8px);
+}
+.relation-graph-panel {
+  top: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+}
+.relation-graph-legend {
+  bottom: 0.75rem;
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.relation-graph-node-link {
+  color: var(--fg);
+  font-weight: 700;
+  text-decoration: none;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relation-graph-node-link:hover { text-decoration: underline; }
+.relation-graph-type {
+  border: 1px solid var(--border);
+  padding: 0 0.25rem;
+  font-size: 0.64rem;
+}
+.relation-graph-type.user { color: var(--link); border-color: rgba(88, 166, 255, 0.45); }
+.relation-graph-type.repo { color: var(--green); border-color: rgba(63, 185, 80, 0.45); }
+.relation-graph-type.org  { color: var(--orange); border-color: rgba(210, 153, 34, 0.45); }
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.legend-dot.user { background: var(--link); }
+.legend-dot.repo { background: var(--green); }
+.legend-dot.org  { background: var(--orange); }
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 640px) {
   body            { padding: 1rem 1rem 3rem; }
@@ -711,4 +810,11 @@ p  { margin: 0 0 0.5rem; }
   .blog-stats-grid { grid-template-columns: repeat(2, 1fr); }
   .blog-live-cols  { grid-template-columns: 1fr; }
   .tab-btn         { padding: 0.4rem 0.65rem; font-size: 0.8rem; }
+  .relation-graph-head { align-items: flex-start; flex-direction: column; }
+  .relation-graph-actions { justify-content: flex-start; }
+  .relation-graph-frame { min-height: 380px; }
+  .relation-graph-canvas { height: 380px; }
+  .relation-graph-panel,
+  .relation-graph-legend { left: 0.5rem; max-width: calc(100% - 1rem); }
+  .relation-graph-legend { gap: 0.45rem; }
 }

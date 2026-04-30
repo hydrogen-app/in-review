@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { RelationGraph } from "@/components/RelationGraph";
 import { UserCharts } from "@/components/UserCharts";
 import { apiGet } from "@/lib/api";
 import { formatDuration, formatNumber, percent, timeAgo, timeChipClass } from "@/lib/format";
@@ -86,6 +87,8 @@ export default async function UserPage({ params }: Props) {
           ) : null}
         </div>
       ) : null}
+
+      <RelationGraph src={`/api/next/graph/user/${encodeURIComponent(user.Login)}`} />
 
       <div className="two-col">
         <div className="col-card">

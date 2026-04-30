@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,9 @@ func (h *Handler) RegisterNextRoutes(r chi.Router) {
 	r.Get("/api/next/user/{username}", h.NextUser)
 	r.Get("/api/next/user/{username}/charts", h.NextUserCharts)
 	r.Get("/api/next/org/{org}", h.NextOrg)
+	r.Get("/api/next/graph/repo/{owner}/{name}", h.NextRepoGraph)
+	r.Get("/api/next/graph/user/{username}", h.NextUserGraph)
+	r.Get("/api/next/graph/org/{org}", h.NextOrgGraph)
 	r.Get("/api/next/leaderboard/{category}", h.NextLeaderboard)
 	r.Get("/api/next/leaderboard/{category}/search", h.NextLeaderboardSearch)
 	r.Get("/api/next/data/{tab}", h.NextData)
@@ -68,6 +72,20 @@ func writeGHJSONError(w http.ResponseWriter, err error, notFoundTitle, notFoundM
 			"Couldn't reach GitHub right now. Try again in a moment.")
 	}
 	return true
+}
+
+func graphLimit(r *http.Request) int {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		return 360
+	}
+	if limit < 80 {
+		return 80
+	}
+	if limit > 1200 {
+		return 1200
+	}
+	return limit
 }
 
 func (h *Handler) NextSession(w http.ResponseWriter, r *http.Request) {
@@ -805,6 +823,49 @@ func (h *Handler) NextOrg(w http.ResponseWriter, r *http.Request) {
 	data.OGUrl = "https://ngmi.review/org/" + orgName
 	h.db.RecordVisit("/org/"+orgName, "org", orgName)
 	writeJSON(w, http.StatusOK, data)
+}
+
+func (h *Handler) NextRepoGraph(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "owner")
+	name := chi.URLParam(r, "name")
+	graph, err := h.db.RepoRelationGraph(owner+"/"+name, graphLimit(r))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "Repo Not Found", "No graph data is available for "+owner+"/"+name+".")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Graph Unavailable", "Could not build the repository graph.")
+		return
+	}
+	writeJSON(w, http.StatusOK, graph)
+}
+
+func (h *Handler) NextUserGraph(w http.ResponseWriter, r *http.Request) {
+	username := chi.URLParam(r, "username")
+	graph, err := h.db.UserRelationGraph(username, graphLimit(r))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "User Not Found", "No graph data is available for "+username+".")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Graph Unavailable", "Could not build the user graph.")
+		return
+	}
+	writeJSON(w, http.StatusOK, graph)
+}
+
+func (h *Handler) NextOrgGraph(w http.ResponseWriter, r *http.Request) {
+	orgName := chi.URLParam(r, "org")
+	graph, err := h.db.OrgRelationGraph(orgName, graphLimit(r))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "Org Not Found", "No graph data is available for "+orgName+".")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "Graph Unavailable", "Could not build the organization graph.")
+		return
+	}
+	writeJSON(w, http.StatusOK, graph)
 }
 
 func (h *Handler) NextLeaderboard(w http.ResponseWriter, r *http.Request) {

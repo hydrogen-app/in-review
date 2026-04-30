@@ -163,6 +163,28 @@ export type RepoChartsData = {
   TimeChartJSON?: string;
 };
 
+export type RelationGraphNode = {
+  ID: string;
+  Label: string;
+  Type: "user" | "org" | "repo";
+  Href: string;
+  Weight: number;
+};
+
+export type RelationGraphEdge = {
+  Source: string;
+  Target: string;
+  Type: "authored" | "reviewed" | "reviewed-pr" | "owns";
+  Weight: number;
+};
+
+export type RelationGraphData = {
+  CenterID: string;
+  Nodes: RelationGraphNode[];
+  Edges: RelationGraphEdge[];
+  Truncated: boolean;
+};
+
 export type UserRecordPR = {
   Number: number;
   RepoFullName: string;

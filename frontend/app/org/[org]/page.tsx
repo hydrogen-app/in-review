@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { TimeCharts, type TimePayload } from "@/components/Charts";
+import { RelationGraph } from "@/components/RelationGraph";
 import { apiGet, qs } from "@/lib/api";
 import { formatDuration, formatNumber, jsonPayload, rankBadge, rankClass } from "@/lib/format";
 import type { OrgData } from "@/types/api";
@@ -42,6 +43,8 @@ export default async function OrgPage({ params, searchParams }: Props) {
       </div>
 
       <TimeCharts payload={time} />
+
+      <RelationGraph src={`/api/next/graph/org/${encodeURIComponent(data.Org.Login)}`} />
 
       <div className="two-col">
         <OrgBoard title="In-Org Review Champions" entries={data.ReviewerBoard} suffix="reviews" />
